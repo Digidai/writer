@@ -8,7 +8,7 @@ export function escapeHtml(s) {
   ));
 }
 
-export function renderMarkdown(src) {
+export function renderMarkdown(src, depth = 0) {
   // NUL is used internally as a code-span sentinel; never allow it in input.
   const lines = String(src || '').replace(/\u0000/g, '').replace(/\r\n?/g, '\n').split('\n');
   const html = [];
@@ -51,7 +51,12 @@ export function renderMarkdown(src) {
         buf.push(lines[i].replace(/^\s*>\s?/, ''));
         i++;
       }
-      html.push(`<blockquote>${renderMarkdown(buf.join('\n'))}</blockquote>`);
+      // Depth cap: a wall of '>' must not recurse the stack away.
+      html.push(
+        depth < 8
+          ? `<blockquote>${renderMarkdown(buf.join('\n'), depth + 1)}</blockquote>`
+          : `<blockquote><p>${inline(buf.join(' '))}</p></blockquote>`
+      );
       continue;
     }
 

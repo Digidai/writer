@@ -1,19 +1,24 @@
 // Writer — a quiet, input-focused writing surface on the Cloudflare stack.
 // Routing: static assets serve the editor (/) and archive (/archive);
-// this Worker handles the API, the reading view (/d/:id) and the cron sweep.
-import { processDocument, sweepIdleDrafts, deriveTitle, markdownFile } from './agent.js';
+// this Worker handles the API, the reading view (/d/:id) and the cron
+// janitor. Archiving itself runs in the WriterPipeline workflow.
+import { launchPipeline, sweepIdleDrafts, deriveTitle, markdownFile } from './agent.js';
 import { complete } from './ai.js';
-import { renderDocumentPage, renderNotFoundPage } from './html.js';
+import { renderDocumentPage, renderNotFoundPage, renderUnlockPage } from './html.js';
+
+export { WriterPipeline } from './pipeline.js';
 
 const MAX_CONTENT = 200_000;
 const MAX_CONTEXT = 4_000;
+// A 'processing' row this stale means its workflow died; relaunch it.
+const STALE_PROCESSING_MS = 5 * 60 * 1000;
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const { pathname } = url;
 
-    if (pathname === '/unlock') return handleUnlock(env, url);
+    if (pathname === '/unlock') return handleUnlock(request, env, url);
 
     const denied = requireAccess(request, env);
     if (denied) return denied;
@@ -42,6 +47,7 @@ async function handleApi(request, env, ctx, url) {
 
   if (path === '/api/documents' && method === 'POST') return createDocument(request, env);
   if (path === '/api/documents' && method === 'GET') return listDocuments(env, url);
+  if (path === '/api/search' && method === 'GET') return searchDocuments(env, url);
   if (path === '/api/complete' && method === 'POST') return handleComplete(request, env);
 
   const m = path.match(/^\/api\/documents\/([0-9a-fA-F-]{36})(?:\/(finalize|file))?$/);
@@ -49,7 +55,7 @@ async function handleApi(request, env, ctx, url) {
     const [, id, sub] = m;
     if (!sub && method === 'GET') return getDocument(env, id);
     if (!sub && method === 'PUT') return updateDocument(request, env, id);
-    if (sub === 'finalize' && method === 'POST') return finalizeDocument(env, ctx, id);
+    if (sub === 'finalize' && method === 'POST') return finalizeDocument(env, id);
     if (sub === 'file' && method === 'GET') return downloadFile(env, id);
   }
 
@@ -58,7 +64,7 @@ async function handleApi(request, env, ctx, url) {
 
 async function createDocument(request, env) {
   const body = await readJson(request);
-  const content = typeof body?.content === 'string' ? body.content : '';
+  const content = typeof (body && body.content) === 'string' ? body.content : '';
   if (content.length > MAX_CONTENT) return json({ error: 'content too large' }, 413);
 
   const id = crypto.randomUUID();
@@ -75,19 +81,26 @@ async function createDocument(request, env) {
 
 async function updateDocument(request, env, id) {
   const body = await readJson(request);
-  if (typeof body?.content !== 'string') return json({ error: 'content required' }, 400);
+  if (typeof (body && body.content) !== 'string') return json({ error: 'content required' }, 400);
   if (body.content.length > MAX_CONTENT) return json({ error: 'content too large' }, 413);
 
+  // Optional optimistic-concurrency guard: the client sends back the
+  // updated_at it last saw; a mismatch means another tab wrote first.
+  const rev = typeof body.rev === 'string' && body.rev ? body.rev : null;
   const now = new Date().toISOString();
-  const result = await env.DB.prepare(
-    `UPDATE documents SET content = ?, title = ?, updated_at = ? WHERE id = ? AND status = 'draft'`
-  )
-    .bind(body.content, deriveTitle(body.content), now, id)
-    .run();
+  const sql = rev
+    ? `UPDATE documents SET content = ?, title = ?, updated_at = ? WHERE id = ? AND status = 'draft' AND updated_at = ?`
+    : `UPDATE documents SET content = ?, title = ?, updated_at = ? WHERE id = ? AND status = 'draft'`;
+  const binds = rev
+    ? [body.content, deriveTitle(body.content), now, id, rev]
+    : [body.content, deriveTitle(body.content), now, id];
+  const result = await env.DB.prepare(sql).bind(...binds).run();
 
   if (result.meta.changes === 0) {
     const row = await env.DB.prepare('SELECT status FROM documents WHERE id = ?').bind(id).first();
-    return row ? json({ error: 'not a draft', status: row.status }, 409) : json({ error: 'not found' }, 404);
+    if (!row) return json({ error: 'not found' }, 404);
+    if (row.status !== 'draft') return json({ error: 'not a draft', status: row.status }, 409);
+    return json({ error: 'conflict', status: 'draft' }, 409);
   }
   return json({ id, status: 'draft', updated_at: now });
 }
@@ -120,21 +133,62 @@ async function listDocuments(env, url) {
   return json({ documents: (results || []).map((r) => publicDoc(r)) });
 }
 
-async function finalizeDocument(env, ctx, id) {
-  const row = await env.DB.prepare('SELECT id, status, content FROM documents WHERE id = ?').bind(id).first();
+async function searchDocuments(env, url) {
+  const q = (url.searchParams.get('q') || '').trim().slice(0, 100);
+  if (!q) return json({ documents: [] });
+
+  const like = `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+  const { results } = await env.DB.prepare(
+    `SELECT id, title, status, category, tags, summary, created_at, updated_at, archived_at
+       FROM documents
+      WHERE status = 'archived'
+        AND (title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\'
+             OR tags LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')
+      ORDER BY archived_at DESC
+      LIMIT 50`
+  )
+    .bind(like, like, like, like)
+    .all();
+
+  return json({ documents: (results || []).map((r) => publicDoc(r)), query: q });
+}
+
+async function finalizeDocument(env, id) {
+  const row = await env.DB.prepare('SELECT id, status, content, updated_at FROM documents WHERE id = ?')
+    .bind(id)
+    .first();
   if (!row) return json({ error: 'not found' }, 404);
-  if (row.status === 'processing') return json({ id, status: 'processing' }, 202);
   if (row.status === 'archived') return json({ id, status: 'archived' });
 
-  if (!row.content || row.content.trim().length < 2) {
-    await env.DB.prepare('DELETE FROM documents WHERE id = ?').bind(id).run();
-    return json({ id, status: 'discarded' });
+  if (row.status === 'processing') {
+    // A workflow should have this in hand; if the row is stale, it died — relaunch.
+    if (Date.parse(row.updated_at) < Date.now() - STALE_PROCESSING_MS) {
+      try {
+        await launchPipeline(env, id, { reclaim: true });
+      } catch (err) {
+        console.error(`finalize: relaunch failed for ${id}`, err);
+      }
+    }
+    return json({ id, status: 'processing' }, 202);
   }
 
-  await env.DB.prepare(`UPDATE documents SET status = 'processing', updated_at = ? WHERE id = ?`)
-    .bind(new Date().toISOString(), id)
-    .run();
-  ctx.waitUntil(processDocument(env, id));
+  if (!row.content || row.content.trim().length < 2) {
+    // Guarded delete: a concurrent autosave may have just landed real
+    // content, in which case fall through and archive it instead.
+    const del = await env.DB.prepare(
+      `DELETE FROM documents WHERE id = ? AND status = 'draft' AND length(trim(content)) < 2`
+    )
+      .bind(id)
+      .run();
+    if (del.meta.changes > 0) return json({ id, status: 'discarded' });
+  }
+
+  const launched = await launchPipeline(env, id);
+  if (!launched) {
+    const cur = await env.DB.prepare('SELECT status FROM documents WHERE id = ?').bind(id).first();
+    if (!cur) return json({ error: 'not found' }, 404);
+    return json({ id, status: cur.status }, 202);
+  }
   return json({ id, status: 'processing' }, 202);
 }
 
@@ -162,7 +216,7 @@ async function downloadFile(env, id) {
 
 async function handleComplete(request, env) {
   const body = await readJson(request);
-  const context = typeof body?.context === 'string' ? body.context.slice(-MAX_CONTEXT) : '';
+  const context = typeof (body && body.context) === 'string' ? body.context.slice(-MAX_CONTEXT) : '';
   if (context.trim().length < 5) return json({ text: '' });
 
   try {
@@ -187,28 +241,56 @@ async function handleReader(env, pathname) {
 // ------------------------------------------------------ Access control
 
 // Optional single-key lock: `wrangler secret put WRITER_ACCESS_KEY`.
-// Visit /unlock?key=... once per browser. Unset = open instance.
+// Unlock once per browser at /unlock. Unset = open instance.
 function requireAccess(request, env) {
   const key = env.WRITER_ACCESS_KEY;
   if (!key) return null;
 
   const cookie = request.headers.get('Cookie') || '';
   const m = cookie.match(/(?:^|;\s*)writer_key=([^;]+)/);
-  if (m && safeEqual(decodeURIComponent(m[1]), key)) return null;
+  if (m) {
+    let given = null;
+    try {
+      given = decodeURIComponent(m[1]);
+    } catch {
+      given = null; // undecodable cookie = no cookie
+    }
+    if (given !== null && safeEqual(given, key)) return null;
+  }
 
   const auth = request.headers.get('Authorization') || '';
-  if (auth === `Bearer ${key}`) return null;
+  if (auth.startsWith('Bearer ') && safeEqual(auth.slice(7), key)) return null;
 
-  return json({ error: 'locked', hint: 'visit /unlock?key=...' }, 401);
+  return json({ error: 'locked', hint: 'visit /unlock' }, 401);
 }
 
-function handleUnlock(env, url) {
+async function handleUnlock(request, env, url) {
   const key = env.WRITER_ACCESS_KEY;
   if (!key) return redirect(url, '/');
-  const given = url.searchParams.get('key') || '';
-  if (!safeEqual(given, key)) return json({ error: 'invalid key' }, 403);
 
-  const headers = new Headers({ Location: '/' });
+  let given = url.searchParams.get('key') || '';
+  if (!given && request.method === 'POST') {
+    try {
+      const form = await request.formData();
+      given = String(form.get('key') || '');
+    } catch {
+      given = '';
+    }
+  }
+
+  if (!given) {
+    return new Response(renderUnlockPage(false), {
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+    });
+  }
+  if (!safeEqual(given, key)) {
+    return new Response(renderUnlockPage(true), {
+      status: 403,
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+    });
+  }
+
+  const headers = new Headers({ Location: '/', 'Cache-Control': 'no-store' });
   headers.append(
     'Set-Cookie',
     `writer_key=${encodeURIComponent(key)}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=15552000`

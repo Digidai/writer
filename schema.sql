@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS documents (
   tags        TEXT, -- JSON array of strings
   summary     TEXT,
   formatted   TEXT, -- agent-formatted Markdown
+  agent_trace TEXT, -- JSON: the agent's decision trail (turns, tools)
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL,
   archived_at TEXT

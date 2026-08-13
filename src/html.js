@@ -54,7 +54,52 @@ export function renderDocumentPage(doc) {
       ${doc.summary ? `<p class="doc-summary">${escapeHtml(doc.summary)}</p>` : ''}
     </header>
     <div class="prose">${renderMarkdown(dedupeTitle(doc.formatted || doc.content || '', doc.title))}</div>
+    ${renderTrace(doc.agent_trace)}
   </article>
+</main>`,
+  });
+}
+
+// The agent's decision trail: which model ran, which tools it consulted.
+function renderTrace(raw) {
+  let trace;
+  try {
+    trace = JSON.parse(raw || 'null');
+  } catch {
+    return '';
+  }
+  if (!Array.isArray(trace) || trace.length === 0) return '';
+
+  const rows = trace
+    .map((t) => {
+      const model = String(t.model || '').replace(/^@cf\/[^/]+\//, '');
+      const tools = (t.tools || [])
+        .map((c) => {
+          const arg = c.args && c.args.query ? `("${c.args.query}")` : '';
+          return `<code>${escapeHtml(`${c.name}${arg}`)}</code>`;
+        })
+        .join(' ');
+      if (t.error) return `<li>第 ${Number(t.turn) || '?'} 轮 · 出错，已用兜底规则归档</li>`;
+      return `<li>第 ${Number(t.turn) || '?'} 轮 · ${escapeHtml(model)} ${tools || '思考'}</li>`;
+    })
+    .join('');
+
+  return `<details class="trace">
+  <summary>Agent 处理轨迹（${trace.length} 轮）</summary>
+  <ul>${rows}</ul>
+</details>`;
+}
+
+export function renderUnlockPage(failed) {
+  return shell({
+    title: '解锁',
+    body: `<main class="reader">
+  <form class="unlock" method="POST" action="/unlock">
+    <p>这台 Writer 已上锁。</p>
+    ${failed ? '<p class="unlock-error">密钥不正确。</p>' : ''}
+    <input type="password" name="key" placeholder="访问密钥" autofocus autocomplete="current-password">
+    <button type="submit">解锁</button>
+  </form>
 </main>`,
   });
 }

@@ -1,21 +1,81 @@
-// Workers AI helpers: inline completion + the archiving agent.
-// Swap models here if your account prefers others (`npx wrangler ai models`).
-export const COMPLETION_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
-export const AGENT_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+// Model roster and Workers AI chat plumbing.
+//
+// Kimi K2.6 (1T, 262k context, native tool calling) is the agent brain.
+// Qwen3-30B-A3B is the low-latency path (inline completion) and the
+// automatic fallback whenever Kimi is unavailable (plan gate 403,
+// rate limit 429, capacity errors). Both are hosted on Workers AI.
+export const AGENT_MODEL = '@cf/moonshotai/kimi-k2.6';
+export const FALLBACK_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
+export const COMPLETION_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
 
-// Above this size the agent only extracts metadata and keeps the original
-// text as-is, so a truncated model response can never eat the document.
-const FORMAT_LIMIT = 8000;
+// Route calls through AI Gateway for per-call logs and cost analytics.
+const GATEWAY = { id: 'default' };
+
+export async function chat(env, model, { messages, tools, max_tokens = 1024, temperature = 0.4 }) {
+  const inputs = { messages, max_tokens, temperature };
+  if (tools && tools.length) inputs.tools = tools;
+  let res;
+  try {
+    res = await env.AI.run(model, inputs, { gateway: GATEWAY });
+  } catch (err) {
+    // Older runtimes / local dev may reject the gateway option; retry bare.
+    if (/gateway/i.test(String(err))) res = await env.AI.run(model, inputs);
+    else throw err;
+  }
+  return normalize(res);
+}
+
+// Agent brain with fallback: Kimi first, Qwen when Kimi is unavailable.
+// Qwen3 is a thinking model — the /no_think soft switch keeps it from
+// spending the whole token budget on reasoning.
+export async function agentChat(env, opts) {
+  try {
+    const r = await chat(env, AGENT_MODEL, opts);
+    return { model: AGENT_MODEL, ...r };
+  } catch (err) {
+    console.warn('agent: kimi unavailable, falling back to qwen:', String(err).slice(0, 200));
+    const messages = opts.messages.map((m, i) =>
+      i === 0 && m.role === 'system' ? { ...m, content: `${m.content}\n/no_think` } : m
+    );
+    const r = await chat(env, FALLBACK_MODEL, { ...opts, messages });
+    return { model: FALLBACK_MODEL, ...r };
+  }
+}
+
+// Workers AI answers in two shapes: OpenAI-style `choices` for newer chat
+// models (Kimi, Qwen3) and a flat `response` for older ones. Normalize both.
+function normalize(res) {
+  const msg = res && res.choices && res.choices[0] && res.choices[0].message;
+  if (msg) {
+    return { content: msg.content || '', toolCalls: (msg.tool_calls || []).map(shapeCall) };
+  }
+  return {
+    content: res && typeof res.response === 'string' ? res.response : '',
+    toolCalls: ((res && res.tool_calls) || []).map(shapeCall),
+  };
+}
+
+function shapeCall(c, i) {
+  const fn = c.function || c;
+  let args = fn.arguments !== undefined ? fn.arguments : c.arguments;
+  if (typeof args === 'string') {
+    try { args = JSON.parse(args || '{}'); } catch { args = {}; }
+  }
+  return { id: c.id || `call:${i}`, name: fn.name || c.name || '', args: args || {} };
+}
+
+// ------------------------------------------------- inline completion
 
 const COMPLETION_SYSTEM = [
   '你是一个写作补全引擎，负责无缝续写用户正在输入的文字。',
   '只输出紧接着已有文字的自然延续：不要重复已有内容，不要解释，不要加引号或任何前缀。',
   '延续要简短：中文不超过 30 个字，英文不超过 15 个词，并在自然的停顿处结束。',
   '使用与原文完全相同的语言、语气和文风。若原文以英文书写则续写英文。',
+  '/no_think',
 ].join('');
 
 export async function complete(env, context) {
-  const res = await env.AI.run(COMPLETION_MODEL, {
+  const res = await chat(env, COMPLETION_MODEL, {
     messages: [
       { role: 'system', content: COMPLETION_SYSTEM },
       { role: 'user', content: `请直接续写以下文字，从末尾无缝接上：\n\n${context}` },
@@ -23,7 +83,7 @@ export async function complete(env, context) {
     max_tokens: 64,
     temperature: 0.5,
   });
-  return polishCompletion(context, textOf(res));
+  return polishCompletion(context, res.content);
 }
 
 function polishCompletion(context, raw) {
@@ -35,7 +95,7 @@ function polishCompletion(context, raw) {
   // The model sometimes repeats the tail of the context; trim the overlap.
   for (let k = Math.min(80, text.length); k > 3; k--) {
     if (context.endsWith(text.slice(0, k))) {
-      text = text.slice(k).replace(/^[\s]+/, '');
+      text = text.slice(k).replace(/^\s+/, '');
       break;
     }
   }
@@ -54,93 +114,4 @@ function polishCompletion(context, raw) {
     text = cut > 20 ? head.slice(0, cut + 1).trimEnd() : head;
   }
   return text;
-}
-
-export const CATEGORIES = ['随笔', '笔记', '工作', '灵感', '清单', '日记', '信件', '其他'];
-
-const AGENT_SCHEMA = {
-  type: 'object',
-  properties: {
-    title: { type: 'string', description: '标题，不超过 20 个字' },
-    category: { type: 'string', enum: CATEGORIES },
-    tags: { type: 'array', items: { type: 'string' }, description: '1 到 4 个简短标签' },
-    summary: { type: 'string', description: '不超过 60 个字的摘要' },
-    formatted: { type: 'string', description: '整理排版后的 Markdown 全文' },
-  },
-  required: ['title', 'category', 'tags', 'summary'],
-};
-
-function agentSystem(withFormatting) {
-  const base = [
-    '你是 Writer 的归档整理 Agent。用户写完一段内容后，你负责对它分类、解析和排版。',
-    '严格输出一个 JSON 对象，不要输出 JSON 之外的任何文字。字段：',
-    '"title"：标题，不超过 20 个字；若原文已有明显标题则沿用。',
-    `"category"：从以下分类中选择一个：${CATEGORIES.map((c) => `"${c}"`).join('、')}。`,
-    '"tags"：1 到 4 个简短标签组成的数组。',
-    '"summary"：不超过 60 个字的摘要，使用与原文相同的语言。',
-  ];
-  if (withFormatting) {
-    base.push(
-      '"formatted"：将原文整理排版后的完整 Markdown：补充合适的标题与分段，把并列内容整理为列表，修正明显的错别字与标点。',
-      '排版时保持原文语言、语义与观点，不改写内容，不增删信息，不添加原文没有的评论。'
-    );
-  }
-  return base.join('\n');
-}
-
-// Ask the agent to organize a document. Returns a plain object or null.
-export async function organize(env, content) {
-  const withFormatting = content.length <= FORMAT_LIMIT;
-  const messages = [
-    { role: 'system', content: agentSystem(withFormatting) },
-    { role: 'user', content },
-  ];
-
-  const schema = withFormatting
-    ? AGENT_SCHEMA
-    : { ...AGENT_SCHEMA, properties: { ...AGENT_SCHEMA.properties, formatted: undefined } };
-
-  let res;
-  try {
-    res = await env.AI.run(AGENT_MODEL, {
-      messages,
-      max_tokens: 4096,
-      temperature: 0.2,
-      response_format: { type: 'json_schema', json_schema: pruneSchema(schema) },
-    });
-  } catch {
-    // Some models reject response_format; fall back to plain prompting.
-    res = await env.AI.run(AGENT_MODEL, { messages, max_tokens: 4096, temperature: 0.2 });
-  }
-  return parseJson(res);
-}
-
-function pruneSchema(schema) {
-  const properties = {};
-  for (const [k, v] of Object.entries(schema.properties)) if (v) properties[k] = v;
-  return { ...schema, properties };
-}
-
-function textOf(res) {
-  if (res == null) return '';
-  if (typeof res === 'string') return res;
-  if (typeof res.response === 'string') return res.response;
-  if (res.response && typeof res.response === 'object') return JSON.stringify(res.response);
-  if (Array.isArray(res.choices) && res.choices[0]?.message?.content) {
-    return res.choices[0].message.content;
-  }
-  return '';
-}
-
-function parseJson(res) {
-  if (res && typeof res.response === 'object' && res.response !== null) return res.response;
-  const text = textOf(res);
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end <= start) return null;
-  try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return null;
-  }
 }

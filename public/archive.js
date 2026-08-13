@@ -1,13 +1,15 @@
-// Archive: everything the agent has filed away, grouped by category.
-
-const CATEGORY_ORDER = ['随笔', '笔记', '工作', '灵感', '清单', '日记', '信件', '其他'];
+// Archive: everything the agent has filed away, grouped by the taxonomy
+// the agent itself maintains. Plus keyword search over the file space.
 
 const processingEl = document.getElementById('processing');
 const groupsEl = document.getElementById('groups');
 const emptyEl = document.getElementById('empty');
 const lockedEl = document.getElementById('locked');
+const searchEl = document.getElementById('search');
 
 let pollTimer = null;
+let searchTimer = null;
+let searchSeq = 0;
 
 async function load() {
   let data;
@@ -37,38 +39,78 @@ async function load() {
   if (processing.length > 0) pollTimer = setTimeout(load, 4000);
 }
 
+async function search(q) {
+  const seq = ++searchSeq;
+  if (!q) return load();
+  let data;
+  try {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+    if (!res.ok) return;
+    data = await res.json();
+  } catch {
+    return;
+  }
+  if (seq !== searchSeq) return;
+
+  clearTimeout(pollTimer);
+  processingEl.hidden = true;
+  groupsEl.replaceChildren();
+  const docs = data.documents || [];
+
+  if (docs.length === 0) {
+    emptyEl.textContent = '没有找到相关内容。';
+    emptyEl.hidden = false;
+    return;
+  }
+  emptyEl.hidden = true;
+
+  const head = el('h2', 'cat-head');
+  head.append(text('检索结果'), el('span', 'rule'), textSpan('count', String(docs.length)));
+  groupsEl.append(head);
+  for (const doc of docs) groupsEl.append(card(doc));
+}
+
+searchEl.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => search(searchEl.value.trim()), 250);
+});
+
 function renderProcessing(items) {
   processingEl.replaceChildren();
   processingEl.hidden = items.length === 0;
   for (const doc of items) {
-    const card = el('div', 'card');
+    const cardEl = el('div', 'card');
     const title = el('p', 'card-title');
     title.append(el('span', 'pending-dot'), text(doc.title || '未命名'));
     const summary = el('p', 'card-summary');
-    summary.textContent = 'AI 正在整理这篇内容…';
-    card.append(title, summary);
-    processingEl.append(card);
+    summary.textContent = 'Agent 正在整理这篇内容…';
+    cardEl.append(title, summary);
+    processingEl.append(cardEl);
   }
 }
 
+// Group by the agent's own categories: largest groups first, 其他 last.
 function renderGroups(docs) {
   groupsEl.replaceChildren();
 
   const groups = new Map();
   for (const doc of docs) {
-    const cat = CATEGORY_ORDER.includes(doc.category) ? doc.category : '其他';
+    const cat = doc.category || '其他';
     if (!groups.has(cat)) groups.set(cat, []);
     groups.get(cat).push(doc);
   }
 
-  for (const cat of CATEGORY_ORDER) {
-    const items = groups.get(cat);
-    if (!items || items.length === 0) continue;
+  const order = [...groups.keys()].sort((a, b) => {
+    if (a === '其他') return 1;
+    if (b === '其他') return -1;
+    return groups.get(b).length - groups.get(a).length;
+  });
 
+  for (const cat of order) {
+    const items = groups.get(cat);
     const head = el('h2', 'cat-head');
     head.append(text(cat), el('span', 'rule'), textSpan('count', String(items.length)));
     groupsEl.append(head);
-
     for (const doc of items) groupsEl.append(card(doc));
   }
 }

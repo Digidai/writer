@@ -28,8 +28,19 @@
     }
   ],
 
-  // Workers AI powers inline completion and the archiving agent.
+  // Workers AI powers inline completion and the archiving agent
+  // (Kimi K2.6 brain, Qwen3 fast path/fallback).
   "ai": { "binding": "AI" },
+
+  // The archiving agent runs as a durable Workflow: one instance per
+  // finished document, each agent turn a retried, resumable step.
+  "workflows": [
+    {
+      "name": "writer-pipeline",
+      "binding": "PIPELINE",
+      "class_name": "WriterPipeline"
+    }
+  ],
 
   // Sweep abandoned drafts into the archive.
   "triggers": { "crons": ["*/10 * * * *"] },
