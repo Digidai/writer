@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>归档 · Writer</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="archive-body">
+
+<header class="bar">
+  <a class="wordmark" href="/">writer<span class="seal">.</span></a>
+  <nav class="bar-nav"><a href="/">继续书写</a></nav>
+</header>
+
+<main class="archive">
+  <h1 class="archive-title">归档</h1>
+  <p class="archive-sub">写完的内容由 AI 自动分类、解析与排版，静静躺在这里。</p>
+
+  <section class="processing" id="processing" hidden></section>
+  <div id="groups"></div>
+  <p class="empty" id="empty" hidden>还没有归档。去<a href="/">写点什么</a>吧。</p>
+  <p class="empty" id="locked" hidden>这台 Writer 已上锁，请通过 /unlock?key=… 解锁。</p>
+</main>
+
+<script type="module" src="/archive.js"></script>
+</body>
+</html>

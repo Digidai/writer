@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "writer",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-01",
+  "account_id": "48d9ccaf5ee7914c803b5d0656462848",
+
+  // Static assets: the editor (/) and the archive (/archive).
+  // Dynamic paths go through the Worker first.
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/d/*", "/unlock"]
+  },
+
+  // Documents live in D1; archived files are mirrored to R2 as Markdown.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "writer-db",
+      "database_id": "f5bb11ba-47b8-47d0-b098-70d1b6286b7c"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "writer-files"
+    }
+  ],
+
+  // Workers AI powers inline completion and the archiving agent.
+  "ai": { "binding": "AI" },
+
+  // Sweep abandoned drafts into the archive.
+  "triggers": { "crons": ["*/10 * * * *"] },
+
+  "routes": [{ "pattern": "writer.genedai.md", "custom_domain": true }],
+
+  "observability": { "enabled": true }
+}

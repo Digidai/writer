@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Writer</title>
+<meta name="description" content="一个安静的、专注于输入的写作工具。落笔即存，其余交给 AI。">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="editor-body">
+
+<header class="bar">
+  <a class="wordmark" href="/">writer<span class="seal">.</span></a>
+  <div class="bar-right">
+    <span class="status" id="status"><span class="status-dot"></span><span id="status-text">就绪</span></span>
+    <button class="finish" id="finish" title="完成并归档（⌘⏎）">完成</button>
+    <nav class="bar-nav"><a href="/archive">归档</a></nav>
+  </div>
+</header>
+
+<main class="desk">
+  <div class="sheet">
+    <div class="mirror" aria-hidden="true"><span id="mirror-text"></span><span class="ghost" id="ghost"></span></div>
+    <textarea class="input" id="input" placeholder="开始书写…" spellcheck="false" autocomplete="off" autofocus></textarea>
+  </div>
+</main>
+
+<div class="hint" id="hint">Tab 采纳建议 · ⌘⏎ 完成归档 · 静置片刻自动归档</div>
+<div class="toast" id="toast" hidden></div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>
