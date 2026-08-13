@@ -8,6 +8,11 @@ export function escapeHtml(s) {
   ));
 }
 
+// Ordered list markers. Chinese writing (and the agent, when it formats
+// Chinese) uses "1、" with no space after the delimiter, so that form is
+// matched too, bounded to two digits to keep prose like "2026、2027" out.
+const ORDERED = /^\s*(?:\d+[.)]\s+|\d{1,2}、\s*)/;
+
 export function renderMarkdown(src, depth = 0) {
   // NUL is used internally as a code-span sentinel; never allow it in input.
   const lines = String(src || '').replace(/\u0000/g, '').replace(/\r\n?/g, '\n').split('\n');
@@ -70,10 +75,10 @@ export function renderMarkdown(src, depth = 0) {
       continue;
     }
 
-    if (/^\s*\d+[.、)]\s+/.test(line)) {
+    if (ORDERED.test(line)) {
       const items = [];
-      while (i < lines.length && /^\s*\d+[.、)]\s+/.test(lines[i])) {
-        items.push(lines[i].replace(/^\s*\d+[.、)]\s+/, ''));
+      while (i < lines.length && ORDERED.test(lines[i])) {
+        items.push(lines[i].replace(ORDERED, ''));
         i++;
       }
       html.push(`<ol>${items.map((it) => `<li>${inline(it)}</li>`).join('')}</ol>`);
@@ -86,7 +91,8 @@ export function renderMarkdown(src, depth = 0) {
     while (
       i < lines.length &&
       !/^\s*$/.test(lines[i]) &&
-      !/^(#{1,4}\s|```|\s*>|\s*[-*+]\s+|\s*\d+[.、)]\s+|\s*(-{3,}|\*{3,})\s*$)/.test(lines[i])
+      !/^(#{1,4}\s|```|\s*>|\s*[-*+]\s+|\s*(-{3,}|\*{3,})\s*$)/.test(lines[i]) &&
+      !ORDERED.test(lines[i])
     ) {
       buf.push(lines[i]);
       i++;

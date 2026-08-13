@@ -1,0 +1,24 @@
+name: Feature request
+description: 提议一个改进
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你遇到的问题
+      description: 请先描述问题本身，而不是直接描述方案
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你设想的做法
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: 与项目取舍的一致性
+      description: 详见 CONTRIBUTING.md
+      options:
+        - label: 不需要新增运行时依赖或构建步骤
+        - label: 不要求用户在写作之外做额外决策
+        - label: 不引入 Cloudflare 之外的服务

@@ -1,16 +1,26 @@
 {
   "name": "writer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A quiet, input-focused writing surface. You write; an agent files everything away.",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/index.js && node --check src/pipeline.js && node --check src/agent.js && node --check src/ai.js && node --check src/markdown.js && node --check src/html.js && node --check public/app.js && node --check public/archive.js",
+    "diagrams": "python3 scripts/make-diagrams.py",
     "db:local": "wrangler d1 execute writer-db --local --file=./schema.sql",
     "db:remote": "wrangler d1 execute writer-db --remote --file=./schema.sql"
   },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Digidai/writer.git"
+  },
+  "homepage": "https://writer.genedai.md",
   "devDependencies": {
+    "lxgw-wenkai-screen-webfont": "^1.7.0",
     "wrangler": "^4.122.0"
   }
 }

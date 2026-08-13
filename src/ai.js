@@ -86,7 +86,9 @@ export async function complete(env, context) {
   return polishCompletion(context, res.content);
 }
 
-function polishCompletion(context, raw) {
+// Exported for tests: trims the model's echo of the context, keeps the
+// suggestion inside one paragraph, and caps it at a sentence boundary.
+export function polishCompletion(context, raw) {
   let text = String(raw || '')
     .replace(/^[\s"'“”‘’]+/, '')
     .replace(/["'“”]+\s*$/, '');
@@ -105,13 +107,15 @@ function polishCompletion(context, raw) {
   if (para !== -1) text = text.slice(0, para);
   text = text.replace(/\n{2,}/g, '\n');
 
-  // Cap length, preferring a sentence boundary.
+  // Cap length. A short complete sentence reads better as a ghost
+  // suggestion than a long one cut mid-clause, so any sentence boundary
+  // in range wins over the hard cut.
   if (text.length > 80) {
     const head = text.slice(0, 80);
     const stops = ['。', '！', '？', '；', '. ', '! ', '? '];
     let cut = -1;
     for (const s of stops) cut = Math.max(cut, head.lastIndexOf(s));
-    text = cut > 20 ? head.slice(0, cut + 1).trimEnd() : head;
+    text = cut > 2 ? head.slice(0, cut + 1).trimEnd() : head;
   }
   return text;
 }

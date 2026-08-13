@@ -15,7 +15,9 @@
     0 1px 0 rgba(31, 27, 18, 0.03),
     0 2px 10px rgba(31, 27, 18, 0.05),
     0 36px 70px -38px rgba(31, 27, 18, 0.25);
-  --serif: Georgia, "Songti SC", "Noto Serif SC", "Source Han Serif SC", serif;
+  /* 霞鹜文楷屏幕阅读版（OFL 开源，见 /fonts/OFL.txt）：楷体骨架 + Klee 血统
+     拉丁字形，中英文混排浑然一体。切片自托管，按 unicode-range 按需加载。 */
+  --serif: "LXGW WenKai Screen", Georgia, "Songti SC", "Noto Serif SC", "Source Han Serif SC", serif;
   --ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
 }
 
@@ -72,7 +74,8 @@ a { color: inherit; }
 }
 
 .wordmark {
-  font: italic 500 19px/1 var(--serif);
+  /* Brand mark stays Georgia italic; LXGW has no true italic. */
+  font: italic 500 19px/1 Georgia, serif;
   letter-spacing: 0.02em;
   color: var(--ink);
   text-decoration: none;

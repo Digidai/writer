@@ -10,6 +10,7 @@ function shell({ title, body, refresh = 0 }) {
 ${refresh ? `<meta http-equiv="refresh" content="${refresh}">` : ''}
 <title>${escapeHtml(title)} · Writer</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/fonts/lxgw-wenkai-screen.css">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body class="reader-body">

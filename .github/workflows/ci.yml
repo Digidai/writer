@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Syntax check
+        run: npm run check
+      - name: Unit tests
+        run: npm test
+      - name: Build check
+        run: npx wrangler deploy --dry-run --outdir /tmp/writer-build
+
+  diagrams:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Diagrams match their generator
+        run: |
+          python3 scripts/make-diagrams.py
+          git diff --exit-code docs/*.svg \
+            || (echo "::error::docs/*.svg are stale, run 'npm run diagrams' and commit the result" && exit 1)

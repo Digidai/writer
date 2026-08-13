@@ -1,0 +1,6 @@
+# Font slices are content-addressed by name and never change in place.
+/fonts/files/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/fonts/*.css
+  Cache-Control: public, max-age=86400
