@@ -1,6 +1,7 @@
 // Archive plumbing: pipeline launch, the cron janitor, heuristic
 // fallbacks and Markdown file storage. The agent itself lives in
 // pipeline.js as a Cloudflare Workflow.
+import { readSettings } from './settings.js';
 
 // Claim a document and launch its archiving workflow. The status guard
 // makes this race-safe: whoever flips draft -> processing launches.
@@ -18,19 +19,27 @@ export async function launchPipeline(env, id, { reclaim = false } = {}) {
   return true;
 }
 
-// Cron janitor: drafts untouched for 15 minutes are considered finished,
-// and 'processing' rows whose workflow died get relaunched — no document
-// can stay stuck in 整理中 forever.
+// Cron janitor. Drafts left alone past the idle window are considered
+// finished, and 'processing' rows whose workflow died get relaunched, so
+// no document can stay stuck in 整理中 forever. The draft half honours
+// the instance setting; the stuck-pipeline half always runs.
 export async function sweepIdleDrafts(env) {
-  const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const settings = await readSettings(env);
+  // Give the editor's own idle timer a chance first, then sweep.
+  const idleMinutes = settings.idleArchiveMinutes ? settings.idleArchiveMinutes * 3 : 0;
+  const draftCutoff = idleMinutes
+    ? new Date(Date.now() - idleMinutes * 60 * 1000).toISOString()
+    : null;
+  const stuckCutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+
   const { results } = await env.DB.prepare(
     `SELECT id FROM documents
-      WHERE (status = 'draft' AND updated_at < ? AND length(trim(content)) >= 2)
+      WHERE (? IS NOT NULL AND status = 'draft' AND updated_at < ? AND length(trim(content)) >= 2)
          OR (status = 'processing' AND updated_at < ?)
       ORDER BY updated_at
       LIMIT 5`
   )
-    .bind(cutoff, cutoff)
+    .bind(draftCutoff, draftCutoff, stuckCutoff)
     .all();
 
   for (const row of results || []) {
@@ -60,10 +69,14 @@ export function markdownFile(doc) {
   ].join('\n');
 }
 
+export function fileKey(doc) {
+  const year = (doc.archived_at || '').slice(0, 4) || 'undated';
+  return `documents/${year}/${doc.id}.md`;
+}
+
 export async function storeFile(env, doc) {
   if (!env.FILES) return;
-  const year = (doc.archived_at || '').slice(0, 4) || 'undated';
-  await env.FILES.put(`documents/${year}/${doc.id}.md`, markdownFile(doc), {
+  await env.FILES.put(fileKey(doc), markdownFile(doc), {
     httpMetadata: { contentType: 'text/markdown; charset=utf-8' },
   });
 }

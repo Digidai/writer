@@ -21,8 +21,15 @@
   --ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
 }
 
+/* Text size, set by the 设置 page via data-size on <html>. */
+:root { --doc-size: 17px; }
+:root[data-size="small"] { --doc-size: 15.5px; }
+:root[data-size="large"] { --doc-size: 19px; }
+
+/* Dark palette: applied when the system asks for it and the reader has
+   not forced light, or whenever dark is explicitly chosen. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --desk: #131210;
     --paper: #1d1b17;
     --ink: #e8e3d7;
@@ -38,6 +45,23 @@
       0 2px 10px rgba(0, 0, 0, 0.3),
       0 36px 70px -38px rgba(0, 0, 0, 0.7);
   }
+}
+
+:root[data-theme="dark"] {
+  --desk: #131210;
+  --paper: #1d1b17;
+  --ink: #e8e3d7;
+  --ink-soft: #a49d8e;
+  --ink-faint: #6e6759;
+  --ghost: #66604f;
+  --seal: #c05b45;
+  --hairline: rgba(232, 227, 215, 0.07);
+  --card-line: rgba(232, 227, 215, 0.09);
+  --code-bg: rgba(232, 227, 215, 0.07);
+  --sheet-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.2),
+    0 2px 10px rgba(0, 0, 0, 0.3),
+    0 36px 70px -38px rgba(0, 0, 0, 0.7);
 }
 
 * { box-sizing: border-box; }
@@ -149,7 +173,7 @@ a { color: inherit; }
   width: 100%;
   min-height: 1123px; /* A4 at 96dpi */
   padding: clamp(56px, 9vw, 104px) clamp(30px, 9vw, 96px);
-  font: 400 17px/1.95 var(--serif);
+  font: 400 var(--doc-size)/1.95 var(--serif);
   letter-spacing: 0.012em;
   white-space: pre-wrap;
   overflow-wrap: break-word;
@@ -375,7 +399,7 @@ a { color: inherit; }
 }
 
 .prose {
-  font: 400 16.5px/1.95 var(--serif);
+  font: 400 calc(var(--doc-size) - 0.5px)/1.95 var(--serif);
   letter-spacing: 0.012em;
   color: var(--ink);
 }
@@ -489,6 +513,138 @@ a { color: inherit; }
 }
 .unlock button:hover { color: var(--ink); border-color: var(--ink-soft); }
 .unlock-error { color: var(--seal); font-size: 13px; }
+
+/* ------------------------------------------------------------ actions */
+
+.doc-actions {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin: 40px 0 0;
+  padding-top: 20px;
+  border-top: 1px solid var(--hairline);
+  font-size: 13px;
+}
+.doc-actions a,
+.doc-actions button {
+  font: 500 13px/1 var(--ui);
+  letter-spacing: 0.03em;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+.doc-actions a:hover,
+.doc-actions button:hover { color: var(--ink); }
+.doc-actions .danger { margin-left: auto; }
+.doc-actions .danger:hover { color: var(--seal); }
+.doc-actions button[disabled] { opacity: 0.4; cursor: default; }
+
+.toast button {
+  font: 500 13px/1 var(--ui);
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ----------------------------------------------------------- settings */
+
+.settings {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 118px 24px 140px;
+}
+
+.page-title {
+  font: 400 30px/1.3 var(--serif);
+  margin: 0 0 8px;
+}
+.page-sub {
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  margin: 0 0 30px;
+}
+
+.setting {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.setting:last-child { border-bottom: 0; }
+.setting-label { flex: 1; min-width: 0; }
+.setting-name {
+  margin: 0;
+  font-size: 14.5px;
+  color: var(--ink);
+}
+.setting-desc {
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink-faint);
+}
+
+.segmented {
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 1px solid var(--card-line);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--paper);
+}
+.segment {
+  font: 400 12.5px/1 var(--ui);
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--card-line);
+  padding: 8px 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, background 0.15s;
+}
+.segment:first-child { border-left: 0; }
+.segment:hover { color: var(--ink); }
+.segment[aria-pressed="true"] {
+  color: var(--paper);
+  background: var(--ink);
+}
+
+.trash { margin-top: 46px; }
+.trash-note {
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--ink-faint);
+  margin: 0 0 16px;
+}
+.trash-card { cursor: default; }
+.trash-card:hover { transform: none; box-shadow: none; }
+.card-actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 16px;
+}
+.link-button {
+  font: 400 12px/1 var(--ui);
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.link-button:hover { color: var(--ink); }
+.link-button.danger:hover { color: var(--seal); }
+
+.settings .empty { margin-top: 30px; text-align: left; }
 
 /* --------------------------------------------------------- responsive */
 

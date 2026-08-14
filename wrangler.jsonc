@@ -14,11 +14,14 @@
   },
 
   // Documents live in D1; archived files are mirrored to R2 as Markdown.
+  // Schema changes go in migrations/, applied with `npm run db:remote`.
+
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "writer-db",
-      "database_id": "f5bb11ba-47b8-47d0-b098-70d1b6286b7c"
+      "database_id": "f5bb11ba-47b8-47d0-b098-70d1b6286b7c",
+      "migrations_dir": "migrations"
     }
   ],
   "r2_buckets": [

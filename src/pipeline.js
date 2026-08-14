@@ -10,6 +10,7 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { agentChat } from './ai.js';
 import { deriveTitle, heuristicMeta, storeFile, clip, sanitizeTags } from './agent.js';
+import { readSettings } from './settings.js';
 
 const MAX_TURNS = 6;
 // Above this size the agent files metadata only and the original text is
@@ -24,9 +25,11 @@ export class WriterPipeline extends WorkflowEntrypoint {
     const doc = await step.do('load-document', () => this.loadDoc(docId));
     if (!doc) return { skipped: docId };
 
+    const settings = await step.do('load-settings', () => readSettings(this.env));
+
     const trace = [];
     let finish = null;
-    let messages = buildBaseMessages(doc);
+    let messages = buildBaseMessages(doc, settings);
 
     for (let turn = 1; turn <= MAX_TURNS && !finish; turn++) {
       // All side effects and model calls live inside the step; the message
@@ -81,7 +84,7 @@ export class WriterPipeline extends WorkflowEntrypoint {
       ];
     }
 
-    const finalDoc = await step.do('persist', () => this.persist(doc, finish, trace));
+    const finalDoc = await step.do('persist', () => this.persist(doc, finish, trace, settings));
     await step.do('store-file', () => storeFile(this.env, finalDoc));
     return { archived: doc.id, category: finalDoc.category, turns: trace.length };
   }
@@ -156,16 +159,17 @@ export class WriterPipeline extends WorkflowEntrypoint {
 
   // Merge the agent's verdict with heuristic fallbacks — user content is
   // never lost or blocked on the model.
-  async persist(doc, finish, trace) {
+  async persist(doc, finish, trace, settings = {}) {
     const fallback = heuristicMeta(doc.content, doc.title);
     const category = clip(str(finish && finish.category) || fallback.category, 12) || '其他';
+    const keepOriginal = settings.agentFormatting === false;
     const final = {
       id: doc.id,
       title: clip(str(finish && finish.title) || fallback.title, 60),
       category,
       tags: sanitizeTags(finish && finish.tags),
       summary: clip(str(finish && finish.summary) || fallback.summary, 200),
-      formatted: str(finish && finish.formatted) || doc.content,
+      formatted: keepOriginal ? doc.content : (str(finish && finish.formatted) || doc.content),
       created_at: doc.created_at,
     };
 
@@ -197,10 +201,12 @@ function str(v) {
 
 // ------------------------------------------------------------ prompts
 
-function buildBaseMessages(doc) {
+function buildBaseMessages(doc, settings = {}) {
   const truncated = doc.content.length > 12000;
   const body = truncated ? `${doc.content.slice(0, 12000)}\n\n（正文过长，已截断）` : doc.content;
-  const wantFormat = doc.content.length <= FORMAT_LIMIT;
+  // Long documents are never re-typeset (a truncated response would eat
+  // text), and the writer can switch typesetting off entirely.
+  const wantFormat = settings.agentFormatting !== false && doc.content.length <= FORMAT_LIMIT;
 
   const system = [
     '你是 Writer 的归档 Agent。用户写完一篇内容后，由你负责把它归入档案库：分类、打标签、写摘要' +
@@ -218,7 +224,7 @@ function buildBaseMessages(doc) {
     '- summary：不超过 60 个字，使用与原文相同的语言。',
     wantFormat
       ? '- formatted：整理排版后的完整 Markdown：补充合适的标题与分段，把并列内容整理为列表，修正明显的错别字与标点。保持原文语言、语义与观点，不改写内容，不增删信息。'
-      : '- 本篇较长，不需要提供 formatted 字段，原文将原样保留。',
+      : '- 不要提供 formatted 字段，原文将原样保留。',
   ].join('\n');
 
   return [

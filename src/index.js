@@ -2,9 +2,10 @@
 // Routing: static assets serve the editor (/) and archive (/archive);
 // this Worker handles the API, the reading view (/d/:id) and the cron
 // janitor. Archiving itself runs in the WriterPipeline workflow.
-import { launchPipeline, sweepIdleDrafts, deriveTitle, markdownFile } from './agent.js';
+import { launchPipeline, sweepIdleDrafts, deriveTitle, markdownFile, fileKey } from './agent.js';
 import { complete } from './ai.js';
 import { renderDocumentPage, renderNotFoundPage, renderUnlockPage } from './html.js';
+import { readSettings, writeSettings } from './settings.js';
 
 export { WriterPipeline } from './pipeline.js';
 
@@ -49,17 +50,28 @@ async function handleApi(request, env, ctx, url) {
   if (path === '/api/documents' && method === 'GET') return listDocuments(env, url);
   if (path === '/api/search' && method === 'GET') return searchDocuments(env, url);
   if (path === '/api/complete' && method === 'POST') return handleComplete(request, env);
+  if (path === '/api/settings' && method === 'GET') return json(await readSettings(env));
+  if (path === '/api/settings' && method === 'PUT') return updateSettings(request, env);
 
-  const m = path.match(/^\/api\/documents\/([0-9a-fA-F-]{36})(?:\/(finalize|file))?$/);
+  const m = path.match(/^\/api\/documents\/([0-9a-fA-F-]{36})(?:\/(finalize|file|reopen|restore))?$/);
   if (m) {
     const [, id, sub] = m;
     if (!sub && method === 'GET') return getDocument(env, id);
     if (!sub && method === 'PUT') return updateDocument(request, env, id);
+    if (!sub && method === 'DELETE') return deleteDocument(env, id, url);
     if (sub === 'finalize' && method === 'POST') return finalizeDocument(env, id);
+    if (sub === 'reopen' && method === 'POST') return reopenDocument(env, id);
+    if (sub === 'restore' && method === 'POST') return restoreDocument(env, id);
     if (sub === 'file' && method === 'GET') return downloadFile(env, id);
   }
 
   return json({ error: 'not found' }, 404);
+}
+
+async function updateSettings(request, env) {
+  const body = await readJson(request);
+  if (!body || typeof body !== 'object') return json({ error: 'invalid body' }, 400);
+  return json(await writeSettings(env, body));
 }
 
 async function createDocument(request, env) {
@@ -112,7 +124,7 @@ async function getDocument(env, id) {
 }
 
 async function listDocuments(env, url) {
-  const allowed = new Set(['draft', 'processing', 'archived']);
+  const allowed = new Set(['draft', 'processing', 'archived', 'deleted']);
   const statuses = (url.searchParams.get('status') || 'archived,processing')
     .split(',')
     .map((s) => s.trim())
@@ -121,16 +133,88 @@ async function listDocuments(env, url) {
 
   const placeholders = statuses.map(() => '?').join(',');
   const { results } = await env.DB.prepare(
-    `SELECT id, title, status, category, tags, summary, created_at, updated_at, archived_at
+    `SELECT id, title, status, category, tags, summary, created_at, updated_at, archived_at, deleted_at
        FROM documents
       WHERE status IN (${placeholders})
-      ORDER BY COALESCE(archived_at, updated_at) DESC
+      ORDER BY COALESCE(deleted_at, archived_at, updated_at) DESC
       LIMIT 200`
   )
     .bind(...statuses)
     .all();
 
   return json({ documents: (results || []).map((r) => publicDoc(r)) });
+}
+
+// Editing an archive entry: it becomes a draft again and comes back to
+// the editor. Finishing it re-runs the agent, so the archive stays the
+// agent's to organize.
+async function reopenDocument(env, id) {
+  const row = await env.DB.prepare('SELECT * FROM documents WHERE id = ?').bind(id).first();
+  if (!row) return json({ error: 'not found' }, 404);
+  if (row.status === 'processing') return json({ error: 'processing', status: 'processing' }, 409);
+  if (row.status === 'deleted') return json({ error: 'deleted', status: 'deleted' }, 409);
+
+  // Edit what the reader saw: the agent's typeset version when there is one.
+  const content = row.formatted || row.content || '';
+  const now = new Date().toISOString();
+  const result = await env.DB.prepare(
+    `UPDATE documents SET status = 'draft', content = ?, updated_at = ?, archived_at = NULL
+      WHERE id = ? AND status IN ('archived', 'draft')`
+  )
+    .bind(content, now, id)
+    .run();
+  if (result.meta.changes === 0) return json({ error: 'conflict' }, 409);
+
+  return json({ id, status: 'draft', content, updated_at: now });
+}
+
+// Deleting is reversible by default: the row moves to the trash and the
+// R2 file stays put. `?permanent=1` erases a trashed document for good.
+async function deleteDocument(env, id, url) {
+  const permanent = url.searchParams.get('permanent') === '1';
+  const row = await env.DB.prepare('SELECT id, status, archived_at FROM documents WHERE id = ?')
+    .bind(id)
+    .first();
+  if (!row) return json({ error: 'not found' }, 404);
+
+  if (!permanent) {
+    if (row.status === 'processing') return json({ error: 'processing' }, 409);
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      `UPDATE documents SET status = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ?`
+    )
+      .bind(now, now, id)
+      .run();
+    return json({ id, status: 'deleted', deleted_at: now });
+  }
+
+  if (row.status !== 'deleted') {
+    return json({ error: 'move to trash first', status: row.status }, 409);
+  }
+  if (env.FILES && row.archived_at) {
+    try {
+      await env.FILES.delete(fileKey({ id: row.id, archived_at: row.archived_at }));
+    } catch (err) {
+      console.error(`delete: R2 removal failed for ${id}`, err);
+    }
+  }
+  await env.DB.prepare('DELETE FROM documents WHERE id = ? AND status = ?').bind(id, 'deleted').run();
+  return json({ id, status: 'erased' });
+}
+
+async function restoreDocument(env, id) {
+  const result = await env.DB.prepare(
+    `UPDATE documents
+        SET status = CASE WHEN archived_at IS NULL THEN 'draft' ELSE 'archived' END,
+            deleted_at = NULL, updated_at = ?
+      WHERE id = ? AND status = 'deleted'`
+  )
+    .bind(new Date().toISOString(), id)
+    .run();
+  if (result.meta.changes === 0) return json({ error: 'not in trash' }, 404);
+
+  const row = await env.DB.prepare('SELECT status FROM documents WHERE id = ?').bind(id).first();
+  return json({ id, status: row ? row.status : 'archived' });
 }
 
 async function searchDocuments(env, url) {
@@ -158,6 +242,7 @@ async function finalizeDocument(env, id) {
     .bind(id)
     .first();
   if (!row) return json({ error: 'not found' }, 404);
+  if (row.status === 'deleted') return json({ id, status: 'deleted' }, 409);
   if (row.status === 'archived') return json({ id, status: 'archived' });
 
   if (row.status === 'processing') {
@@ -234,7 +319,7 @@ async function handleReader(env, pathname) {
   if (!m) return htmlResponse(renderNotFoundPage(), 404);
 
   const row = await env.DB.prepare('SELECT * FROM documents WHERE id = ?').bind(m[1]).first();
-  if (!row) return htmlResponse(renderNotFoundPage(), 404);
+  if (!row || row.status === 'deleted') return htmlResponse(renderNotFoundPage(), 404);
   return htmlResponse(renderDocumentPage(row));
 }
 
@@ -322,6 +407,7 @@ function publicDoc(row, { content = false } = {}) {
     updated_at: row.updated_at,
     archived_at: row.archived_at,
   };
+  if (row.deleted_at) doc.deleted_at = row.deleted_at;
   if (content) {
     doc.content = row.content;
     doc.formatted = row.formatted;

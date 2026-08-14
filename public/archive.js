@@ -1,5 +1,6 @@
 // Archive: everything the agent has filed away, grouped by the taxonomy
 // the agent itself maintains. Plus keyword search over the file space.
+import { toast, hideToast } from '/toast.js';
 
 const processingEl = document.getElementById('processing');
 const groupsEl = document.getElementById('groups');
@@ -165,4 +166,24 @@ function textSpan(className, s) {
   return span;
 }
 
+// Arriving here right after a delete: offer to undo it.
+function offerUndo() {
+  const id = sessionStorage.getItem('writer.justDeleted');
+  if (!id) return;
+  sessionStorage.removeItem('writer.justDeleted');
+
+  const el_ = toast('已移到回收站 · <button type="button" id="undo">撤销</button>', { duration: 8000 });
+  el_?.querySelector('#undo')?.addEventListener('click', async () => {
+    try {
+      const res = await fetch(`/api/documents/${id}/restore`, { method: 'POST' });
+      if (!res.ok) throw new Error(`restore ${res.status}`);
+      hideToast();
+      load();
+    } catch {
+      toast('恢复失败，可在设置的回收站里重试');
+    }
+  });
+}
+
 load();
+offerUndo();

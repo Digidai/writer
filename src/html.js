@@ -1,7 +1,12 @@
 // Server-rendered pages: the reading view for archived documents.
 import { renderMarkdown, escapeHtml } from './markdown.js';
 
-function shell({ title, body, refresh = 0 }) {
+// Applied before first paint so a chosen theme and text size never flash.
+const BOOT = `<script>try{var s=JSON.parse(localStorage.getItem('writer.settings')||'{}');
+if(s.theme==='light'||s.theme==='dark')document.documentElement.dataset.theme=s.theme;
+if(s.fontSize)document.documentElement.dataset.size=s.fontSize;}catch(e){}</script>`;
+
+function shell({ title, body, refresh = 0, script = '' }) {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -12,13 +17,16 @@ ${refresh ? `<meta http-equiv="refresh" content="${refresh}">` : ''}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/fonts/lxgw-wenkai-screen.css">
 <link rel="stylesheet" href="/style.css">
+${BOOT}
 </head>
 <body class="reader-body">
 <header class="bar">
   <a class="wordmark" href="/">writer<span class="seal">.</span></a>
-  <nav class="bar-nav"><a href="/archive">归档</a></nav>
+  <nav class="bar-nav"><a href="/archive">归档</a><a href="/settings">设置</a></nav>
 </header>
 ${body}
+<div class="toast" id="toast" hidden></div>
+${script}
 </body>
 </html>`;
 }
@@ -40,8 +48,10 @@ export function renderDocumentPage(doc) {
     });
   }
 
+  const id = encodeURIComponent(doc.id);
   return shell({
     title: doc.title || '未命名',
+    script: `<script type="module" src="/doc.js" data-doc="${escapeHtml(doc.id)}"></script>`,
     body: `<main class="reader">
   <article class="doc">
     <header class="doc-head">
@@ -50,12 +60,16 @@ export function renderDocumentPage(doc) {
         <span class="chip">${escapeHtml(doc.category || '其他')}</span>
         ${tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join('')}
         <span class="date">${escapeHtml(date)}</span>
-        <a class="download" href="/api/documents/${encodeURIComponent(doc.id)}/file">下载 .md</a>
       </p>
       ${doc.summary ? `<p class="doc-summary">${escapeHtml(doc.summary)}</p>` : ''}
     </header>
     <div class="prose">${renderMarkdown(dedupeTitle(doc.formatted || doc.content || '', doc.title))}</div>
     ${renderTrace(doc.agent_trace)}
+    <p class="doc-actions">
+      <button type="button" data-action="edit">修改</button>
+      <a href="/api/documents/${id}/file">下载 .md</a>
+      <button type="button" class="danger" data-action="delete">删除</button>
+    </p>
   </article>
 </main>`,
   });

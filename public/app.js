@@ -4,19 +4,28 @@
 // always current), never archived stale (finalize aborts if saving failed),
 // and never fought over (one tab owns a draft at a time).
 
+import { toast } from '/toast.js';
+
 const input = document.getElementById('input');
 const mirrorText = document.getElementById('mirror-text');
 const ghostEl = document.getElementById('ghost');
 const statusEl = document.getElementById('status');
 const statusText = document.getElementById('status-text');
 const finishBtn = document.getElementById('finish');
-const toastEl = document.getElementById('toast');
 
 const SAVE_DELAY = 800;
-const COMPLETE_DELAY = 700;
-const IDLE_ARCHIVE_MS = 5 * 60 * 1000;
 const MIN_ARCHIVE_CHARS = 30;
 const KEEPALIVE_LIMIT = 60_000; // keepalive request body quota is 64 KiB
+
+// Instance settings, mirrored from the server (see /settings). The cached
+// copy applies immediately; the fetched copy wins once it lands.
+const prefs = {
+  completion: true,
+  completionDelay: 700,
+  idleArchiveMinutes: 5,
+  fontSize: 'standard',
+  theme: 'system',
+};
 
 const store = {
   get docId() { return localStorage.getItem('writer.docId'); },
@@ -104,10 +113,12 @@ function acceptGhost() {
 
 function scheduleComplete() {
   clearTimeout(state.completeTimer);
-  state.completeTimer = setTimeout(requestCompletion, COMPLETE_DELAY);
+  if (!prefs.completion) return;
+  state.completeTimer = setTimeout(requestCompletion, prefs.completionDelay);
 }
 
 async function requestCompletion() {
+  if (!prefs.completion) return;
   if (state.composing || state.finalizing || state.yielded) return;
   if (document.activeElement !== input) return;
   const value = input.value;
@@ -283,18 +294,36 @@ async function finalize(auto = false) {
   }
 }
 
-// --------------------------------------------------------------- toast
+// ------------------------------------------------------------ settings
 
-let toastTimer = null;
-function toast(html) {
-  toastEl.innerHTML = html;
-  toastEl.hidden = false;
-  requestAnimationFrame(() => toastEl.classList.add('show'));
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    toastEl.classList.remove('show');
-    setTimeout(() => { toastEl.hidden = true; }, 300);
-  }, 5000);
+function applyPrefs(next) {
+  Object.assign(prefs, next || {});
+  const root = document.documentElement;
+  if (prefs.theme === 'light' || prefs.theme === 'dark') root.dataset.theme = prefs.theme;
+  else delete root.dataset.theme;
+  root.dataset.size = prefs.fontSize || 'standard';
+  if (!prefs.completion) {
+    clearTimeout(state.completeTimer);
+    cancelCompletion();
+  }
+  resize();
+}
+
+async function loadPrefs() {
+  try {
+    applyPrefs(JSON.parse(localStorage.getItem('writer.settings') || '{}'));
+  } catch {
+    /* no cache yet */
+  }
+  try {
+    const res = await fetch('/api/settings');
+    if (!res.ok) return;
+    const server = await res.json();
+    applyPrefs(server);
+    localStorage.setItem('writer.settings', JSON.stringify(server));
+  } catch {
+    /* offline: the cached copy stands */
+  }
 }
 
 // ----------------------------------------------------------- multi-tab
@@ -395,17 +424,19 @@ window.addEventListener('focus', claimOwnership);
 
 // Quietly archive after a long pause, so finished thoughts file themselves.
 setInterval(() => {
+  if (!prefs.idleArchiveMinutes) return; // 0 means manual archiving only
   if (state.finalizing || state.composing || state.yielded || !state.ready) return;
   if (document.visibilityState !== 'visible') return;
   if (!store.docId) return;
   if (input.value.trim().length < MIN_ARCHIVE_CHARS) return;
-  if (Date.now() - state.lastInput < IDLE_ARCHIVE_MS) return;
+  if (Date.now() - state.lastInput < prefs.idleArchiveMinutes * 60 * 1000) return;
   finalize(true);
 }, 30 * 1000);
 
 // ---------------------------------------------------------------- init
 
 async function init() {
+  loadPrefs();
   const id = store.docId;
   if (id) {
     try {

@@ -30,6 +30,8 @@ Writer 反过来做减法。它只提供一张随时摊开的纸：你负责写�
 
 **归档。** 一篇内容完成后（点击「完成」、按 `⌘⏎`，或静置数分钟自动触发），归档 Agent 接手：它先查看档案库现有的分类体系、检索相似的旧文，再决定这篇的标题、分类、标签、摘要与排版，最后存为 Markdown 文件。
 
+**回头修改。** 归档后的内容不是只读的。在阅读页点「修改」，它会变回草稿回到编辑器，改完重新交给 Agent 归档；点「删除」则移入回收站，可以立刻撤销，也可以之后在设置里恢复。彻底删除会同时移除 R2 中的 Markdown 文件。
+
 <table>
 <tr>
 <td width="50%"><img src="docs/screenshot-archive-light.png#gh-light-mode-only" alt="归档页"><img src="docs/screenshot-archive-dark.png#gh-dark-mode-only" alt="归档页"></td>
@@ -94,7 +96,7 @@ npx wrangler d1 create writer-db
 npx wrangler r2 bucket create writer-files
 ```
 
-把上一步返回的 `database_id` 填进 `wrangler.jsonc`，并把 `account_id` 换成你自己的（`npx wrangler whoami` 可以查到），然后初始化表结构并部署：
+把上一步返回的 `database_id` 填进 `wrangler.jsonc`，并把 `account_id` 换成你自己的（`npx wrangler whoami` 可以查到），然后应用迁移并部署：
 
 ```bash
 npm run db:remote
@@ -127,6 +129,19 @@ export const COMPLETION_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8'; // 输入联想：
 
 Kimi K2.6 属于 Workers AI 的前沿模型，需要 Workers Paid（$5/月）或预付 AI Gateway 额度，免费计划调用会返回 403。此时 Writer 会自动降级到 Qwen3，功能不受影响。参考价格：Kimi $0.95/M 输入、$4.00/M 输出，归档一篇普通长度的文章约几美分；Qwen3-30B 在免费额度内即可运行。
 
+### 偏好设置
+
+`/settings` 页面的偏好保存在 D1 里（不是浏览器本地），所以换设备打开也一致，服务端的 Cron 与 Agent 读的是同一份：
+
+| 设置 | 作用 |
+| --- | --- |
+| 正文字号 / 主题 | 纸面与阅读页的排版和明暗，浅色深色可以强制指定 |
+| 输入联想 / 灵敏度 | 关闭后不再请求模型；灵敏度决定停顿多久给建议 |
+| Agent 排版 | 关闭后 Agent 只做分类、标签与摘要，正文一字不动 |
+| 静置自动归档 | 停笔多久后自动归档，可以关掉只保留手动「完成」 |
+
+同一页底部是回收站，可以恢复或彻底删除。
+
 ### 访问密钥
 
 公开部署的实例任何人都能写入。如果想上锁：
@@ -145,15 +160,21 @@ src/
   pipeline.js   WriterPipeline：归档 Agent 的 Workflow 定义
   agent.js      流水线启动、Cron 巡检、启发式兜底、R2 文件写入
   ai.js         模型声明、工具调用协议、降级逻辑、输入联想
+  settings.js   实例设置的读写与校验
   markdown.js   零依赖 Markdown 渲染器（先转义再解析）
   html.js       阅读页与解锁页的服务端渲染
 public/
   index.html    编辑器
   app.js        自动保存、幽灵补全、多标签页协调、归档触发
   archive.html  归档页
-  archive.js    分类陈列与检索
+  archive.js    分类陈列、检索、删除撤销
+  settings.html 设置页
+  settings.js   偏好开关与回收站
+  doc.js        阅读页的修改与删除
+  toast.js      共用的提示条
   style.css     全部样式（含深色模式与打印样式）
   fonts/        霞鹜文楷屏幕阅读版切片（OFL）
+migrations/     D1 迁移，npm run db:remote 应用
 docs/           架构图与截图（scripts/make-diagrams.py 生成）
 test/           node:test 单元测试
 ```
