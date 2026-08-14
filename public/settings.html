@@ -9,29 +9,34 @@
 <link rel="stylesheet" href="/style.css">
 <script>try{var s=JSON.parse(localStorage.getItem('writer.settings')||'{}');
 if(s.theme==='light'||s.theme==='dark')document.documentElement.dataset.theme=s.theme;
-if(s.fontSize)document.documentElement.dataset.size=s.fontSize;}catch(e){}</script>
+if(s.fontSize)document.documentElement.dataset.size=s.fontSize;
+var l=s.language==='zh'||s.language==='en'?s.language:((navigator.language||'').toLowerCase().indexOf('zh')===0?'zh':'en');
+document.documentElement.lang=l==='en'?'en':'zh-CN';}catch(e){}</script>
 </head>
 <body class="settings-body">
 
 <header class="bar">
   <a class="wordmark" href="/">writer<span class="seal">.</span></a>
-  <nav class="bar-nav"><a href="/archive">归档</a><a href="/">继续书写</a></nav>
+  <nav class="bar-nav">
+    <a href="/archive" data-i18n="nav.archive">归档</a>
+    <a href="/" data-i18n="nav.write">继续书写</a>
+  </nav>
 </header>
 
 <main class="settings">
-  <h1 class="page-title">设置</h1>
-  <p class="page-sub">这些偏好保存在你的 Writer 实例上，换设备打开也一致。</p>
+  <h1 class="page-title" data-i18n="settings.title">设置</h1>
+  <p class="page-sub" data-i18n="settings.sub">这些偏好保存在你的 Writer 实例上，换设备打开也一致。</p>
 
   <div id="fields"></div>
 
   <section class="trash">
-    <h2 class="cat-head">回收站<span class="rule"></span><span class="count" id="trash-count">0</span></h2>
-    <p class="trash-note">删除的内容会留在这里，随时可以恢复。彻底删除会同时移除已归档的 Markdown 文件，无法撤销。</p>
+    <h2 class="cat-head"><span data-i18n="settings.trash">回收站</span><span class="rule"></span><span class="count" id="trash-count">0</span></h2>
+    <p class="trash-note" data-i18n="settings.trashNote">删除的内容会留在这里，随时可以恢复。彻底删除会同时移除已归档的 Markdown 文件，无法撤销。</p>
     <div id="trash-list"></div>
-    <p class="empty" id="trash-empty">回收站是空的。</p>
+    <p class="empty" id="trash-empty" data-i18n="settings.trashEmpty">回收站是空的。</p>
   </section>
 
-  <p class="empty" id="locked" hidden>这台 Writer 已上锁，请先<a href="/unlock">解锁</a>。</p>
+  <p class="empty" id="locked" data-i18n-html="common.locked" hidden>这台 Writer 已上锁，请先<a href="/unlock">解锁</a>。</p>
 </main>
 
 <div class="toast" id="toast" hidden></div>

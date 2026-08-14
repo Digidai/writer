@@ -5,6 +5,7 @@
 // and never fought over (one tab owns a draft at a time).
 
 import { toast } from '/toast.js';
+import { makeT, applyDom, resolveLang, locale } from '/i18n.js';
 
 const input = document.getElementById('input');
 const mirrorText = document.getElementById('mirror-text');
@@ -20,12 +21,16 @@ const KEEPALIVE_LIMIT = 60_000; // keepalive request body quota is 64 KiB
 // Instance settings, mirrored from the server (see /settings). The cached
 // copy applies immediately; the fetched copy wins once it lands.
 const prefs = {
+  language: 'auto',
   completion: true,
   completionDelay: 700,
   idleArchiveMinutes: 5,
   fontSize: 'standard',
   theme: 'system',
 };
+
+let lang = resolveLang('auto', navigator.language);
+let t = makeT(lang);
 
 const store = {
   get docId() { return localStorage.getItem('writer.docId'); },
@@ -58,10 +63,10 @@ function setStatus(kind, text) {
 }
 
 function markSaved() {
-  const t = new Date();
-  const hh = String(t.getHours()).padStart(2, '0');
-  const mm = String(t.getMinutes()).padStart(2, '0');
-  setStatus('saved', `已保存 ${hh}:${mm}`);
+  const time = new Intl.DateTimeFormat(locale(lang), {
+    hour: '2-digit', minute: '2-digit', hour12: lang === 'en',
+  }).format(new Date());
+  setStatus('saved', t('editor.saved', { time }));
 }
 
 // ------------------------------------------------------------- layout
@@ -168,7 +173,7 @@ async function doSave() {
   if (!state.dirty) return;
   if (!content.trim() && !store.docId) { state.dirty = false; return; }
 
-  setStatus('saving', '保存中…');
+  setStatus('saving', t('editor.saving'));
   try {
     if (!store.docId) {
       const res = await fetch('/api/documents', {
@@ -176,7 +181,7 @@ async function doSave() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content }),
       });
-      if (res.status === 401) return setStatus('locked', '需要密钥');
+      if (res.status === 401) return setStatus('locked', t('editor.keyNeeded'));
       if (!res.ok) throw new Error(`save ${res.status}`);
       const data = await res.json();
       store.docId = data.id;
@@ -187,7 +192,7 @@ async function doSave() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content, rev: state.rev }),
       });
-      if (res.status === 401) return setStatus('locked', '需要密钥');
+      if (res.status === 401) return setStatus('locked', t('editor.keyNeeded'));
       if (res.status === 404 || res.status === 409) {
         // Archived, gone, or written by another tab — carry the local
         // text into a fresh draft rather than overwrite anyone.
@@ -201,7 +206,7 @@ async function doSave() {
     if (input.value === content) state.dirty = false;
     markSaved();
   } catch {
-    setStatus('offline', '离线 · 已本地备份');
+    setStatus('offline', t('editor.offline'));
   }
 }
 
@@ -254,17 +259,17 @@ async function finalize(auto = false) {
   try {
     await state.saveChain; // drain any in-flight save first
     if (!snapshot.trim()) {
-      if (!auto) toast('还没有内容');
+      if (!auto) toast(t('editor.toastEmpty'));
       return;
     }
     if (!(await flushExact(snapshot))) {
-      setStatus('offline', '离线 · 已本地备份');
-      if (!auto) toast('保存未完成，暂不归档');
+      setStatus('offline', t('editor.offline'));
+      if (!auto) toast(t('editor.toastSaveFailed'));
       return;
     }
 
     const res = await fetch(`/api/documents/${store.docId}/finalize`, { method: 'POST' });
-    if (res.status === 401) return setStatus('locked', '需要密钥');
+    if (res.status === 401) return setStatus('locked', t('editor.keyNeeded'));
     if (!res.ok && res.status !== 202) throw new Error(`finalize ${res.status}`);
     const data = await res.json().catch(() => ({}));
 
@@ -280,15 +285,15 @@ async function finalize(auto = false) {
     state.dirty = Boolean(remainder.trim());
     syncMirror();
     resize();
-    setStatus('', '就绪');
+    setStatus('', t('editor.ready'));
     if (state.dirty) scheduleSave();
 
     if (data.status !== 'discarded') {
-      toast('已交给 AI 整理 · <a href="/archive">前往归档</a>');
+      toast(t('editor.toastArchiving'));
     }
     if (!auto) input.focus();
   } catch {
-    toast('归档失败，稍后再试');
+    toast(t('editor.toastFailed'));
   } finally {
     state.finalizing = false;
   }
@@ -302,6 +307,13 @@ function applyPrefs(next) {
   if (prefs.theme === 'light' || prefs.theme === 'dark') root.dataset.theme = prefs.theme;
   else delete root.dataset.theme;
   root.dataset.size = prefs.fontSize || 'standard';
+
+  lang = resolveLang(prefs.language, navigator.language);
+  t = makeT(lang);
+  root.lang = lang === 'en' ? 'en' : 'zh-CN';
+  applyDom(document, t);
+  if (statusEl.className === 'status ') setStatus('', t('editor.ready'));
+
   if (!prefs.completion) {
     clearTimeout(state.completeTimer);
     cancelCompletion();
@@ -345,8 +357,8 @@ if (channel) {
     cancelCompletion();
     clearTimeout(state.saveTimer);
     input.readOnly = true;
-    setStatus('yielded', '已在另一标签页继续');
-    toast('这篇草稿已在另一个标签页打开 · 点击纸面接管');
+    setStatus('yielded', t('editor.yielded'));
+    toast(t('editor.toastOtherTab'));
   };
 }
 
@@ -436,12 +448,14 @@ setInterval(() => {
 // ---------------------------------------------------------------- init
 
 async function init() {
+  applyPrefs({});
+  setStatus('', t('editor.ready'));
   loadPrefs();
   const id = store.docId;
   if (id) {
     try {
       const res = await fetch(`/api/documents/${id}`);
-      if (res.status === 401) { state.ready = true; return setStatus('locked', '需要密钥'); }
+      if (res.status === 401) { state.ready = true; return setStatus('locked', t('editor.keyNeeded')); }
       if (res.ok) {
         const doc = await res.json();
         if (doc.status === 'draft') {
@@ -463,11 +477,11 @@ async function init() {
       } else {
         // Server trouble: keep the docId, work from the local backup.
         if (!state.dirty && input.value === '') input.value = store.backup;
-        setStatus('offline', '离线 · 已本地备份');
+        setStatus('offline', t('editor.offline'));
       }
     } catch {
       if (!state.dirty && input.value === '') input.value = store.backup;
-      setStatus('offline', '离线 · 已本地备份');
+      setStatus('offline', t('editor.offline'));
     }
   } else if (store.backup && !state.dirty && input.value === '') {
     input.value = store.backup;

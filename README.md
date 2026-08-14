@@ -135,6 +135,7 @@ Kimi K2.6 属于 Workers AI 的前沿模型，需要 Workers Paid（$5/月）或
 
 | 设置 | 作用 |
 | --- | --- |
+| 界面语言 | 中文 / English，默认跟随浏览器 |
 | 正文字号 / 主题 | 纸面与阅读页的排版和明暗，浅色深色可以强制指定 |
 | 输入联想 / 灵敏度 | 关闭后不再请求模型；灵敏度决定停顿多久给建议 |
 | Agent 排版 | 关闭后 Agent 只做分类、标签与摘要，正文一字不动 |
@@ -172,6 +173,7 @@ public/
   settings.js   偏好开关与回收站
   doc.js        阅读页的修改与删除
   toast.js      共用的提示条
+  i18n.js       中英词典，浏览器与 Worker 共用同一份
   style.css     全部样式（含深色模式与打印样式）
   fonts/        霞鹜文楷屏幕阅读版切片（OFL）
 migrations/     D1 迁移，npm run db:remote 应用
@@ -208,5 +210,7 @@ test/           node:test 单元测试
 You write on an A4-like canvas; everything else is handled for you. Text autosaves continuously (cloud plus local backup), and an inline AI suggests light continuations as you pause, accepted with `Tab` exactly like code completion in Cursor or VS Code.
 
 When a piece is finished, an archiving agent takes over inside a durable [Cloudflare Workflow](https://developers.cloudflare.com/workflows/). Kimi K2.6 runs a multi-turn tool-use loop: it inspects the archive's existing taxonomy, searches similar past pieces, then files the document with a title, category, tags, summary and clean typesetting, and mirrors a Markdown file to R2. Every agent turn is an independently retried, resumable step, so a model timeout or an evicted isolate never strands a document. The decision trace is saved and visible on each document's page. If Kimi is unavailable the agent falls back to Qwen3; if the agent fails entirely, heuristics take over. User content is never lost or truncated.
+
+The interface speaks Chinese and English, following your browser by default and switchable in settings; the agent writes each document's title, tags and summary in that document's own language. Archived pieces are not read-only: "Modify" turns one back into a draft and re-runs the pipeline when you finish, while "Delete" moves it to a trash you can undo immediately or restore later.
 
 Browse and search everything at `/archive`. No framework, no bundler, no runtime dependencies: what is in `src/` and `public/` is what gets deployed. See [快速开始](#快速开始) for deploy steps (the commands are language-neutral), and [src/ai.js](src/ai.js) to swap models. Note that Kimi K2.6 requires a Workers Paid plan; on the free plan Writer automatically runs on Qwen3 instead.

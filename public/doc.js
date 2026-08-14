@@ -1,6 +1,17 @@
 // Reading-page actions: reopen a document for editing, or move it to the
 // trash. Deletion is reversible, so it asks once and then offers undo.
 import { toast } from '/toast.js';
+import { makeT, resolveLang } from '/i18n.js';
+
+const t = makeT(resolveLang(storedLang(), navigator.language));
+
+function storedLang() {
+  try {
+    return JSON.parse(localStorage.getItem('writer.settings') || '{}').language;
+  } catch {
+    return 'auto';
+  }
+}
 
 const id = document.currentScript?.dataset.doc
   || document.querySelector('script[data-doc]')?.dataset.doc;
@@ -12,7 +23,7 @@ document.querySelector('[data-action="edit"]')?.addEventListener('click', async 
     const res = await fetch(`/api/documents/${id}/reopen`, { method: 'POST' });
     if (res.status === 409) {
       const data = await res.json().catch(() => ({}));
-      toast(data.status === 'processing' ? 'Agent 正在整理这篇，稍后再试' : '这篇无法修改');
+      toast(t(data.status === 'processing' ? 'reader.editBusy' : 'reader.editUnavailable'));
       button.disabled = false;
       return;
     }
@@ -22,13 +33,13 @@ document.querySelector('[data-action="edit"]')?.addEventListener('click', async 
     localStorage.removeItem('writer.backup');
     location.href = '/';
   } catch {
-    toast('打开失败，稍后再试');
+    toast(t('reader.editFailed'));
     button.disabled = false;
   }
 });
 
 document.querySelector('[data-action="delete"]')?.addEventListener('click', async (e) => {
-  if (!confirm('把这篇移到回收站？可以在设置里恢复。')) return;
+  if (!confirm(t('reader.confirmDelete'))) return;
   const button = e.currentTarget;
   button.disabled = true;
   try {
@@ -37,7 +48,7 @@ document.querySelector('[data-action="delete"]')?.addEventListener('click', asyn
     sessionStorage.setItem('writer.justDeleted', id);
     location.href = '/archive';
   } catch {
-    toast('删除失败，稍后再试');
+    toast(t('reader.deleteFailed'));
     button.disabled = false;
   }
 });

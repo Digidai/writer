@@ -2,49 +2,57 @@
 // localStorage so the editor and the reading pages can apply them before
 // their first paint.
 import { toast } from '/toast.js';
+import { makeT, applyDom, resolveLang, locale } from '/i18n.js';
 
 const FIELDS = [
   {
-    group: '书写',
+    group: 'settings.groupWriting',
+    key: 'language',
+    label: 'settings.language',
+    desc: 'settings.languageDesc',
+    options: [['auto', 'opt.auto'], ['zh', '中文'], ['en', 'English']],
+  },
+  {
+    group: 'settings.groupWriting',
     key: 'fontSize',
-    label: '正文字号',
-    desc: '纸面与阅读页的正文大小',
-    options: [['small', '小'], ['standard', '标准'], ['large', '大']],
+    label: 'settings.fontSize',
+    desc: 'settings.fontSizeDesc',
+    options: [['small', 'opt.small'], ['standard', 'opt.standard'], ['large', 'opt.large']],
   },
   {
-    group: '书写',
+    group: 'settings.groupWriting',
     key: 'theme',
-    label: '主题',
-    desc: '默认跟随系统的浅色或深色',
-    options: [['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']],
+    label: 'settings.theme',
+    desc: 'settings.themeDesc',
+    options: [['system', 'opt.system'], ['light', 'opt.light'], ['dark', 'opt.dark']],
   },
   {
-    group: 'AI 辅助',
+    group: 'settings.groupAI',
     key: 'completion',
-    label: '输入联想',
-    desc: '停顿时给出灰色的续写建议，Tab 采纳',
-    options: [[true, '开'], [false, '关']],
+    label: 'settings.completion',
+    desc: 'settings.completionDesc',
+    options: [[true, 'opt.on'], [false, 'opt.off']],
   },
   {
-    group: 'AI 辅助',
+    group: 'settings.groupAI',
     key: 'completionDelay',
-    label: '联想灵敏度',
-    desc: '停顿多久之后给出建议',
-    options: [[300, '灵敏'], [700, '标准'], [1500, '迟缓']],
+    label: 'settings.completionDelay',
+    desc: 'settings.completionDelayDesc',
+    options: [[300, 'opt.eager'], [700, 'opt.standard'], [1500, 'opt.relaxed']],
   },
   {
-    group: 'AI 辅助',
+    group: 'settings.groupAI',
     key: 'agentFormatting',
-    label: 'Agent 排版',
-    desc: '归档时整理分段与列表。关闭后只做分类与摘要，原文一字不动',
-    options: [[true, '开'], [false, '关']],
+    label: 'settings.agentFormatting',
+    desc: 'settings.agentFormattingDesc',
+    options: [[true, 'opt.on'], [false, 'opt.off']],
   },
   {
-    group: '归档',
+    group: 'settings.groupArchive',
     key: 'idleArchiveMinutes',
-    label: '静置自动归档',
-    desc: '停笔多久后自动交给 Agent 整理',
-    options: [[0, '关闭'], [3, '3 分钟'], [5, '5 分钟'], [15, '15 分钟'], [30, '30 分钟']],
+    label: 'settings.idleArchive',
+    desc: 'settings.idleArchiveDesc',
+    options: [[0, 'opt.never'], [3, 3], [5, 5], [15, 15], [30, 30]],
   },
 ];
 
@@ -55,8 +63,14 @@ const trashEmptyEl = document.getElementById('trash-empty');
 const lockedEl = document.getElementById('locked');
 
 let settings = {};
+let lang = 'zh';
+let t = makeT(lang);
 
 // --------------------------------------------------------------- render
+
+function optionLabel(value) {
+  return typeof value === 'number' ? t('opt.minutes', { n: value }) : t(value);
+}
 
 function render() {
   fieldsEl.replaceChildren();
@@ -66,30 +80,29 @@ function render() {
     if (field.group !== group) {
       group = field.group;
       const head = el('h2', 'cat-head');
-      head.append(text(group), el('span', 'rule'));
+      head.append(text(t(group)), el('span', 'rule'));
       fieldsEl.append(head);
     }
 
     const row = el('div', 'setting');
     const label = el('div', 'setting-label');
     const name = el('p', 'setting-name');
-    name.textContent = field.label;
+    name.textContent = t(field.label);
     const desc = el('p', 'setting-desc');
-    desc.textContent = field.desc;
+    desc.textContent = t(field.desc);
     label.append(name, desc);
 
-    const group_ = el('div', 'segmented');
-    for (const [value, text_] of field.options) {
+    const choices = el('div', 'segmented');
+    for (const [value, labelKey] of field.options) {
       const button = el('button', 'segment');
       button.type = 'button';
-      button.textContent = text_;
-      const active = settings[field.key] === value;
-      button.setAttribute('aria-pressed', String(active));
+      button.textContent = optionLabel(labelKey);
+      button.setAttribute('aria-pressed', String(settings[field.key] === value));
       button.addEventListener('click', () => save(field.key, value));
-      group_.append(button);
+      choices.append(button);
     }
 
-    row.append(label, group_);
+    row.append(label, choices);
     fieldsEl.append(row);
   }
 }
@@ -98,9 +111,7 @@ async function save(key, value) {
   const previous = settings[key];
   if (previous === value) return;
   settings = { ...settings, [key]: value };
-  cache();
-  render();
-  apply();
+  applyAll();
 
   try {
     const res = await fetch('/api/settings', {
@@ -110,37 +121,43 @@ async function save(key, value) {
     });
     if (!res.ok) throw new Error(`settings ${res.status}`);
     settings = await res.json();
-    cache();
-    render();
-    apply();
+    applyAll();
   } catch {
     settings = { ...settings, [key]: previous };
-    cache();
-    render();
-    apply();
-    toast('保存失败，已还原');
+    applyAll();
+    toast(t('settings.toastSaveFailed'));
   }
 }
 
-function cache() {
+// Language, theme and text size all come from the same object, so one
+// pass keeps the page, the cache and the markup in sync.
+function applyAll() {
   try {
     localStorage.setItem('writer.settings', JSON.stringify(settings));
   } catch {
-    /* private mode: server copy is the source of truth anyway */
+    /* private mode: the server copy is the source of truth anyway */
   }
-}
 
-function apply() {
+  lang = resolveLang(settings.language, navigator.language);
+  t = makeT(lang);
+
   const root = document.documentElement;
   if (settings.theme === 'light' || settings.theme === 'dark') root.dataset.theme = settings.theme;
   else delete root.dataset.theme;
   root.dataset.size = settings.fontSize || 'standard';
+  root.lang = lang === 'en' ? 'en' : 'zh-CN';
+  document.title = `${t('settings.title')} · Writer`;
+
+  applyDom(document, t);
+  render();
+  renderTrash();
 }
 
 // ---------------------------------------------------------------- trash
 
+let trashDocs = [];
+
 async function loadTrash() {
-  let docs = [];
   try {
     const res = await fetch('/api/documents?status=deleted');
     if (res.status === 401) {
@@ -148,30 +165,33 @@ async function loadTrash() {
       return;
     }
     if (!res.ok) throw new Error(`trash ${res.status}`);
-    docs = (await res.json()).documents || [];
+    trashDocs = (await res.json()).documents || [];
   } catch {
     return;
   }
+  renderTrash();
+}
 
+function renderTrash() {
   trashEl.replaceChildren();
-  trashCountEl.textContent = String(docs.length);
-  trashEmptyEl.hidden = docs.length > 0;
+  trashCountEl.textContent = String(trashDocs.length);
+  trashEmptyEl.hidden = trashDocs.length > 0;
 
-  for (const doc of docs) {
+  for (const doc of trashDocs) {
     const card = el('div', 'card trash-card');
     const title = el('p', 'card-title');
-    title.textContent = doc.title || '未命名';
+    title.textContent = doc.title || t('common.untitled');
     const foot = el('p', 'card-foot');
-    foot.append(textSpan('date', `删除于 ${formatDate(doc.deleted_at)}`));
+    foot.append(textSpan('date', t('settings.deletedAt', { date: formatDate(doc.deleted_at) })));
 
     const actions = el('span', 'card-actions');
     const restore = el('button', 'link-button');
     restore.type = 'button';
-    restore.textContent = '恢复';
+    restore.textContent = t('settings.restore');
     restore.addEventListener('click', () => act(doc, 'restore'));
     const erase = el('button', 'link-button danger');
     erase.type = 'button';
-    erase.textContent = '彻底删除';
+    erase.textContent = t('settings.erase');
     erase.addEventListener('click', () => act(doc, 'erase'));
     actions.append(restore, erase);
     foot.append(actions);
@@ -182,16 +202,17 @@ async function loadTrash() {
 }
 
 async function act(doc, kind) {
-  if (kind === 'erase' && !confirm(`彻底删除「${doc.title || '未命名'}」？无法撤销。`)) return;
+  const title = doc.title || t('common.untitled');
+  if (kind === 'erase' && !confirm(t('settings.confirmErase', { title }))) return;
   try {
     const res = kind === 'restore'
       ? await fetch(`/api/documents/${doc.id}/restore`, { method: 'POST' })
       : await fetch(`/api/documents/${doc.id}?permanent=1`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`${kind} ${res.status}`);
-    toast(kind === 'restore' ? '已恢复到归档' : '已彻底删除');
+    toast(t(kind === 'restore' ? 'settings.toastRestored' : 'settings.toastErased'));
     loadTrash();
   } catch {
-    toast('操作失败，稍后再试');
+    toast(t('settings.toastActionFailed'));
   }
 }
 
@@ -201,7 +222,7 @@ function formatDate(iso) {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' }).format(d);
+  return new Intl.DateTimeFormat(locale(lang), { month: 'long', day: 'numeric' }).format(d);
 }
 
 function el(tag, className) {
@@ -224,23 +245,23 @@ function textSpan(className, s) {
 
 async function init() {
   try {
+    settings = JSON.parse(localStorage.getItem('writer.settings') || '{}');
+  } catch {
+    settings = {};
+  }
+  applyAll();
+
+  try {
     const res = await fetch('/api/settings');
     if (res.status === 401) {
       lockedEl.hidden = false;
       return;
     }
     settings = await res.json();
+    applyAll();
   } catch {
-    try {
-      settings = JSON.parse(localStorage.getItem('writer.settings') || '{}');
-    } catch {
-      settings = {};
-    }
-    toast('暂时无法连接，显示的是本地缓存');
+    toast(t('settings.toastCached'));
   }
-  cache();
-  render();
-  apply();
   loadTrash();
 }
 

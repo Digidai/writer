@@ -3,6 +3,7 @@
 // fall back to the default, so a bad write can never brick the app.
 
 export const DEFAULTS = {
+  language: 'auto',          // auto | zh | en
   fontSize: 'standard',      // small | standard | large
   theme: 'system',           // system | light | dark
   completion: true,          // inline AI suggestions on/off
@@ -12,6 +13,7 @@ export const DEFAULTS = {
 };
 
 const SCHEMA = {
+  language: (v) => (['auto', 'zh', 'en'].includes(v) ? v : null),
   fontSize: (v) => (['small', 'standard', 'large'].includes(v) ? v : null),
   theme: (v) => (['system', 'light', 'dark'].includes(v) ? v : null),
   completion: (v) => (typeof v === 'boolean' ? v : null),

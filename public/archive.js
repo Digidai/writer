@@ -1,6 +1,18 @@
 // Archive: everything the agent has filed away, grouped by the taxonomy
 // the agent itself maintains. Plus keyword search over the file space.
 import { toast, hideToast } from '/toast.js';
+import { makeT, applyDom, resolveLang, locale } from '/i18n.js';
+
+function storedSettings() {
+  try {
+    return JSON.parse(localStorage.getItem('writer.settings') || '{}');
+  } catch {
+    return {};
+  }
+}
+
+let lang = resolveLang(storedSettings().language, navigator.language);
+let t = makeT(lang);
 
 const processingEl = document.getElementById('processing');
 const groupsEl = document.getElementById('groups');
@@ -23,7 +35,7 @@ async function load() {
     if (!res.ok) throw new Error(`list ${res.status}`);
     data = await res.json();
   } catch {
-    emptyEl.textContent = '暂时无法连接，稍后刷新试试。';
+    emptyEl.textContent = t('common.offline');
     emptyEl.hidden = false;
     return;
   }
@@ -59,14 +71,14 @@ async function search(q) {
   const docs = data.documents || [];
 
   if (docs.length === 0) {
-    emptyEl.textContent = '没有找到相关内容。';
+    emptyEl.textContent = t('archive.noResults');
     emptyEl.hidden = false;
     return;
   }
   emptyEl.hidden = true;
 
   const head = el('h2', 'cat-head');
-  head.append(text('检索结果'), el('span', 'rule'), textSpan('count', String(docs.length)));
+  head.append(text(t('archive.results')), el('span', 'rule'), textSpan('count', String(docs.length)));
   groupsEl.append(head);
   for (const doc of docs) groupsEl.append(card(doc));
 }
@@ -82,9 +94,9 @@ function renderProcessing(items) {
   for (const doc of items) {
     const cardEl = el('div', 'card');
     const title = el('p', 'card-title');
-    title.append(el('span', 'pending-dot'), text(doc.title || '未命名'));
+    title.append(el('span', 'pending-dot'), text(doc.title || t('common.untitled')));
     const summary = el('p', 'card-summary');
-    summary.textContent = 'Agent 正在整理这篇内容…';
+    summary.textContent = t('archive.processing');
     cardEl.append(title, summary);
     processingEl.append(cardEl);
   }
@@ -121,7 +133,7 @@ function card(doc) {
   a.href = `/d/${encodeURIComponent(doc.id)}`;
 
   const title = el('p', 'card-title');
-  title.textContent = doc.title || '未命名';
+  title.textContent = doc.title || t('common.untitled');
   a.append(title);
 
   if (doc.summary) {
@@ -143,7 +155,7 @@ function formatDate(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   const sameYear = d.getFullYear() === new Date().getFullYear();
-  return new Intl.DateTimeFormat('zh-CN', {
+  return new Intl.DateTimeFormat(locale(lang), {
     ...(sameYear ? {} : { year: 'numeric' }),
     month: 'long',
     day: 'numeric',
@@ -172,7 +184,7 @@ function offerUndo() {
   if (!id) return;
   sessionStorage.removeItem('writer.justDeleted');
 
-  const el_ = toast('已移到回收站 · <button type="button" id="undo">撤销</button>', { duration: 8000 });
+  const el_ = toast(t('archive.toastDeleted'), { duration: 8000 });
   el_?.querySelector('#undo')?.addEventListener('click', async () => {
     try {
       const res = await fetch(`/api/documents/${id}/restore`, { method: 'POST' });
@@ -180,10 +192,32 @@ function offerUndo() {
       hideToast();
       load();
     } catch {
-      toast('恢复失败，可在设置的回收站里重试');
+      toast(t('archive.toastRestoreFailed'));
     }
   });
 }
 
+// The stored copy paints first; the server copy is authoritative.
+async function syncLang() {
+  try {
+    const res = await fetch('/api/settings');
+    if (!res.ok) return;
+    const settings = await res.json();
+    localStorage.setItem('writer.settings', JSON.stringify(settings));
+    const next = resolveLang(settings.language, navigator.language);
+    if (next === lang) return;
+    lang = next;
+    t = makeT(lang);
+    document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
+    applyDom(document, t);
+    load();
+  } catch {
+    /* offline: the cached language stands */
+  }
+}
+
+applyDom(document, t);
+document.title = `${t('archive.title')} · Writer`;
 load();
 offerUndo();
+syncLang();

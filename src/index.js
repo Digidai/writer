@@ -6,6 +6,7 @@ import { launchPipeline, sweepIdleDrafts, deriveTitle, markdownFile, fileKey } f
 import { complete } from './ai.js';
 import { renderDocumentPage, renderNotFoundPage, renderUnlockPage } from './html.js';
 import { readSettings, writeSettings } from './settings.js';
+import { resolveLang } from '../public/i18n.js';
 
 export { WriterPipeline } from './pipeline.js';
 
@@ -26,7 +27,7 @@ export default {
 
     try {
       if (pathname.startsWith('/api/')) return await handleApi(request, env, ctx, url);
-      if (pathname.startsWith('/d/')) return await handleReader(env, pathname);
+      if (pathname.startsWith('/d/')) return await handleReader(request, env, pathname);
     } catch (err) {
       console.error('unhandled error', err);
       return json({ error: 'internal error' }, 500);
@@ -314,13 +315,26 @@ async function handleComplete(request, env) {
 
 // ------------------------------------------------------------- Reader
 
-async function handleReader(env, pathname) {
+async function handleReader(request, env, pathname) {
+  const lang = await pageLang(request, env);
   const m = pathname.match(/^\/d\/([0-9a-fA-F-]{36})$/);
-  if (!m) return htmlResponse(renderNotFoundPage(), 404);
+  if (!m) return htmlResponse(renderNotFoundPage(lang), 404);
 
   const row = await env.DB.prepare('SELECT * FROM documents WHERE id = ?').bind(m[1]).first();
-  if (!row || row.status === 'deleted') return htmlResponse(renderNotFoundPage(), 404);
-  return htmlResponse(renderDocumentPage(row));
+  if (!row || row.status === 'deleted') return htmlResponse(renderNotFoundPage(lang), 404);
+  return htmlResponse(renderDocumentPage(row, lang));
+}
+
+// The stored preference wins; 'auto' falls back to the browser's own
+// Accept-Language header.
+async function pageLang(request, env) {
+  let pref = 'auto';
+  try {
+    pref = (await readSettings(env)).language;
+  } catch {
+    /* settings unavailable: fall through to the header */
+  }
+  return resolveLang(pref, request.headers.get('Accept-Language'));
 }
 
 // ------------------------------------------------------ Access control
@@ -363,13 +377,17 @@ async function handleUnlock(request, env, url) {
     }
   }
 
+  // The lock sits in front of everything, so the stored preference is not
+  // readable here; go by what the browser asks for.
+  const lang = resolveLang('auto', request.headers.get('Accept-Language'));
+
   if (!given) {
-    return new Response(renderUnlockPage(false), {
+    return new Response(renderUnlockPage(false, lang), {
       headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
   if (!safeEqual(given, key)) {
-    return new Response(renderUnlockPage(true), {
+    return new Response(renderUnlockPage(true, lang), {
       status: 403,
       headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
     });

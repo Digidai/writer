@@ -108,11 +108,17 @@ a { color: inherit; }
 
 .bar-right { display: flex; align-items: center; gap: 18px; }
 
+.bar-nav {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
 .bar-nav a {
   font-size: 13px;
   color: var(--ink-soft);
   text-decoration: none;
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 .bar-nav a:hover { color: var(--ink); }
 
