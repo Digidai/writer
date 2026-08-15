@@ -24,7 +24,7 @@ Writer 反过来做减法。它只提供一张随时摊开的纸：你负责写�
 
 ## 它如何工作
 
-**书写。** 页面主体是一张 A4 纸样式的画布。打开即写，内容随输入自动保存到云端与本地，关掉页面、断网、切换标签页都不会丢。正文使用[霞鹜文楷](https://github.com/lxgw/LxgwWenKai)排版，中英文混排时字重与基线保持一致。
+**书写。** 页面主体是一张 A4 纸样式的画布。打开即写，内容随输入自动保存到云端与本地，关掉页面、断网、切换标签页都不会丢。正文使用[思源黑体](https://github.com/notofonts/noto-cjk)（Noto Sans SC）排版，拉丁字形取自 Source Sans，中英文混排时字重与基线保持一致。
 
 **联想。** 输入停顿时，AI 会在光标后给出一段浅灰色的续写建议，交互与 Cursor / VS Code 的代码补全一致：`Tab` 采纳，`Esc` 忽略，继续打字则自动消失。它只做轻量的输入辅助，不会改写你已经写下的内容。
 
@@ -174,8 +174,9 @@ public/
   doc.js        阅读页的修改与删除
   toast.js      共用的提示条
   i18n.js       中英词典，浏览器与 Worker 共用同一份
+  menu.js       收起式导航（右上角菜单）
   style.css     全部样式（含深色模式与打印样式）
-  fonts/        霞鹜文楷屏幕阅读版切片（OFL）
+  fonts/        思源黑体切片（Noto Sans SC，OFL）
 migrations/     D1 迁移，npm run db:remote 应用
 docs/           架构图与截图（scripts/make-diagrams.py 生成）
 test/           node:test 单元测试
@@ -194,7 +195,7 @@ test/           node:test 单元测试
 
 ## 致谢
 
-- [霞鹜文楷](https://github.com/lxgw/LxgwWenKai) by 落霞孤鹜，SIL OFL 1.1 授权，本项目使用其屏幕阅读版切片
+- [思源黑体 / Noto Sans SC](https://github.com/notofonts/noto-cjk)，SIL OFL 1.1 授权，切片由 [Fontsource](https://fontsource.org/fonts/noto-sans-sc) 提供
 - [Cloudflare Workers 平台](https://developers.cloudflare.com/)与 Workers AI 上开源的 Kimi、Qwen 模型
 
 ## License

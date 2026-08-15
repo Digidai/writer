@@ -3,6 +3,7 @@
 // their first paint.
 import { toast } from '/toast.js';
 import { makeT, applyDom, resolveLang, locale } from '/i18n.js';
+import { mountMenu } from '/menu.js';
 
 const FIELDS = [
   {
@@ -149,6 +150,7 @@ function applyAll() {
   document.title = `${t('settings.title')} · Writer`;
 
   applyDom(document, t);
+  mountMenu(t);
   render();
   renderTrash();
 }

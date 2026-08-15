@@ -2,6 +2,7 @@
 // the agent itself maintains. Plus keyword search over the file space.
 import { toast, hideToast } from '/toast.js';
 import { makeT, applyDom, resolveLang, locale } from '/i18n.js';
+import { mountMenu } from '/menu.js';
 
 function storedSettings() {
   try {
@@ -210,6 +211,7 @@ async function syncLang() {
     t = makeT(lang);
     document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
     applyDom(document, t);
+    mountMenu(t);
     load();
   } catch {
     /* offline: the cached language stands */
@@ -217,6 +219,7 @@ async function syncLang() {
 }
 
 applyDom(document, t);
+mountMenu(t);
 document.title = `${t('archive.title')} · Writer`;
 load();
 offerUndo();

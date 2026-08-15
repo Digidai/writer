@@ -6,9 +6,10 @@
 <title>Writer</title>
 <meta name="description" content="一个安静的、专注于输入的写作工具。落笔即存，其余交给 AI。A quiet, input-focused writing surface.">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="preload" href="/fonts/files/lxgwwenkaiscreen-subset-119.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="/fonts/files/lxgwwenkaiscreen-subset-118.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/fonts/lxgw-wenkai-screen.css">
+<link rel="preload" href="/fonts/files/noto-sans-sc-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/files/noto-sans-sc-119-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/files/noto-sans-sc-118-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/noto-sans-sc.css">
 <link rel="stylesheet" href="/style.css">
 <script>try{var s=JSON.parse(localStorage.getItem('writer.settings')||'{}');
 if(s.theme==='light'||s.theme==='dark')document.documentElement.dataset.theme=s.theme;
@@ -23,10 +24,6 @@ document.documentElement.lang=l==='en'?'en':'zh-CN';}catch(e){}</script>
   <div class="bar-right">
     <span class="status" id="status"><span class="status-dot"></span><span id="status-text">就绪</span></span>
     <button class="finish" id="finish" data-i18n="editor.finish" data-i18n-title="editor.finishHint" title="完成并归档（⌘⏎）">完成</button>
-    <nav class="bar-nav">
-      <a href="/archive" data-i18n="nav.archive">归档</a>
-      <a href="/settings" data-i18n="nav.settings">设置</a>
-    </nav>
   </div>
 </header>
 

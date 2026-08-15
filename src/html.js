@@ -17,17 +17,20 @@ function shell({ title, body, lang, t, refresh = 0, script = '' }) {
 ${refresh ? `<meta http-equiv="refresh" content="${refresh}">` : ''}
 <title>${escapeHtml(title)} · Writer</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/fonts/lxgw-wenkai-screen.css">
+<link rel="stylesheet" href="/fonts/noto-sans-sc.css">
 <link rel="stylesheet" href="/style.css">
 ${BOOT}
 </head>
 <body class="reader-body">
 <header class="bar">
   <a class="wordmark" href="/">writer<span class="seal">.</span></a>
-  <nav class="bar-nav"><a href="/archive">${escapeHtml(t('nav.archive'))}</a><a href="/settings">${escapeHtml(t('nav.settings'))}</a></nav>
+  <div class="bar-right">
+    <noscript><nav class="bar-nav"><a href="/">${escapeHtml(t('nav.write'))}</a><a href="/archive">${escapeHtml(t('nav.archive'))}</a></nav></noscript>
+  </div>
 </header>
 ${body}
 <div class="toast" id="toast" hidden></div>
+<script type="module" src="/menu.js"></script>
 ${script}
 </body>
 </html>`;

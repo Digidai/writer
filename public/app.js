@@ -6,6 +6,7 @@
 
 import { toast } from '/toast.js';
 import { makeT, applyDom, resolveLang, locale } from '/i18n.js';
+import { mountMenu } from '/menu.js';
 
 const input = document.getElementById('input');
 const mirrorText = document.getElementById('mirror-text');
@@ -312,6 +313,7 @@ function applyPrefs(next) {
   t = makeT(lang);
   root.lang = lang === 'en' ? 'en' : 'zh-CN';
   applyDom(document, t);
+  mountMenu(t);
   if (statusEl.className === 'status ') setStatus('', t('editor.ready'));
 
   if (!prefs.completion) {
