@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import worker from '../src/index.js';
+import { searchDocumentsData } from '../src/search-endpoint.js';
 
 test('semantic search falls back to keyword mode when semantic bindings are unavailable', async () => {
   const env = {
@@ -34,15 +34,9 @@ test('semantic search falls back to keyword mode when semantic bindings are unav
         };
       },
     },
-    ASSETS: { fetch: () => new Response('asset') },
   };
 
-  const req = new Request('https://writer.example/api/search?q=demo&mode=semantic', {
-    headers: { Authorization: 'Bearer secret' },
-  });
-  const res = await worker.fetch(req, env, { waitUntil() {} });
-  assert.equal(res.status, 200);
-  const body = await res.json();
+  const body = await searchDocumentsData(env, new URL('https://writer.example/api/search?q=demo&mode=semantic'));
   assert.equal(body.mode, 'keyword');
   assert.equal(body.fallback, true);
   assert.equal(body.documents.length, 1);

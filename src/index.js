@@ -12,9 +12,9 @@ import { updateSettings } from './settings-endpoint.js';
 import { updateDocument } from './document-update.js';
 import { resolveLang } from '../public/i18n.js';
 import { handleExportRequest } from './export.js';
-import { keywordSearchRows, hydrateArchivedRowsByIds, parseSearchMode } from './search.js';
-import { searchSemanticIds, deleteDocumentVector } from './semantic.js';
+import { deleteDocumentVector } from './semantic.js';
 import { handleMcpRequest } from './mcp.js';
+import { searchDocumentsData } from './search-endpoint.js';
 
 export { WriterPipeline } from './pipeline.js';
 
@@ -246,23 +246,7 @@ async function restoreDocument(env, id) {
 }
 
 async function searchDocuments(env, url) {
-  const q = (url.searchParams.get('q') || '').trim().slice(0, 100);
-  if (!q) return json({ documents: [] });
-  const requestedMode = parseSearchMode(url.searchParams.get('mode'));
-  const limit = 50;
-
-  if (requestedMode === 'semantic' && env.WRITER_ACCESS_KEY) {
-    const semantic = await searchSemanticIds(env, q, { limit });
-    if (semantic) {
-      const rows = await hydrateArchivedRowsByIds(env, semantic.ids, { limit });
-      return json({ documents: rows.map((r) => publicDoc(r)), query: q, mode: 'semantic', fallback: false });
-    }
-    const fallbackRows = await keywordSearchRows(env, q, { limit });
-    return json({ documents: fallbackRows.map((r) => publicDoc(r)), query: q, mode: 'keyword', fallback: true });
-  }
-
-  const rows = await keywordSearchRows(env, q, { limit });
-  return json({ documents: rows.map((r) => publicDoc(r)), query: q, mode: 'keyword', fallback: false });
+  return json(await searchDocumentsData(env, url, { mapDoc: (row) => publicDoc(row), limit: 50 }));
 }
 
 async function finalizeDocument(env, id) {

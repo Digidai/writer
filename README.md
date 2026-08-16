@@ -195,6 +195,7 @@ src/
   ai.js         模型声明、工具调用协议、降级逻辑、输入联想
   semantic.js   向量嵌入、Vectorize 检索与归档索引更新
   search.js     关键词检索与语义检索结果回填
+  search-endpoint.js /api/search 的模式与回退编排
   zip.js        零依赖 zip 打包（STORE）
   mcp.js        私有模式只读 MCP 端点（list/search/get）
   settings.js   实例设置的读写与校验
