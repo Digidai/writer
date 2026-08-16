@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.0] - 2026-08-16
+
+补齐测试覆盖：restore/vector 生命周期、search helpers、reader 转义与 cron janitor。
+
 ## [0.8.0] - 2026-08-16
 
 私有实例补齐：语义索引回填 + MCP 传输修正，并合并 0.5.2 hygiene。
