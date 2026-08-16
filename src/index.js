@@ -11,6 +11,10 @@ import { enforceRateLimit } from './rate-limit.js';
 import { updateSettings } from './settings-endpoint.js';
 import { updateDocument } from './document-update.js';
 import { resolveLang } from '../public/i18n.js';
+import { handleExportRequest } from './export.js';
+import { deleteDocumentVector } from './semantic.js';
+import { handleMcpRequest } from './mcp.js';
+import { searchDocumentsData } from './search-endpoint.js';
 
 export { WriterPipeline } from './pipeline.js';
 
@@ -25,6 +29,10 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const { pathname } = url;
+
+    if (/^\/mcp\/?$/.test(pathname)) {
+      return handleMcpRequest(request, env);
+    }
 
     if (pathname === '/unlock') {
       return handleUnlock(request, env, url, {
@@ -68,6 +76,9 @@ async function handleApi(request, env, ctx, url) {
   }
   if (path === '/api/documents' && method === 'GET') return listDocuments(env, url);
   if (path === '/api/search' && method === 'GET') return searchDocuments(env, url);
+  if (path === '/api/export' && (method === 'GET' || method === 'HEAD')) {
+    return handleExportRequest(request, env);
+  }
   if (path === '/api/complete' && method === 'POST') {
     const limited = await enforceRateLimit(request, {
       bucket: 'complete',
@@ -215,6 +226,7 @@ async function deleteDocument(env, id, url) {
     }
   }
   await env.DB.prepare('DELETE FROM documents WHERE id = ? AND status = ?').bind(id, 'deleted').run();
+  await deleteDocumentVector(env, id);
   return json({ id, status: 'erased' });
 }
 
@@ -234,23 +246,7 @@ async function restoreDocument(env, id) {
 }
 
 async function searchDocuments(env, url) {
-  const q = (url.searchParams.get('q') || '').trim().slice(0, 100);
-  if (!q) return json({ documents: [] });
-
-  const like = `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
-  const { results } = await env.DB.prepare(
-    `SELECT id, title, status, category, tags, summary, created_at, updated_at, archived_at
-       FROM documents
-      WHERE status = 'archived'
-        AND (title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\'
-             OR tags LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')
-      ORDER BY archived_at DESC
-      LIMIT 50`
-  )
-    .bind(like, like, like, like)
-    .all();
-
-  return json({ documents: (results || []).map((r) => publicDoc(r)), query: q });
+  return json(await searchDocumentsData(env, url, { mapDoc: (row) => publicDoc(row), limit: 50 }));
 }
 
 async function finalizeDocument(env, id) {

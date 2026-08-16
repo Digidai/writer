@@ -15,6 +15,11 @@ const ghostEl = document.getElementById('ghost');
 const statusEl = document.getElementById('status');
 const statusText = document.getElementById('status-text');
 const finishBtn = document.getElementById('finish');
+const hintEl = document.getElementById('hint');
+const barEl = document.querySelector('.bar');
+const completionBarEl = document.getElementById('completion-bar');
+const completionAcceptEl = document.getElementById('completion-accept');
+const completionDismissEl = document.getElementById('completion-dismiss');
 
 const SAVE_DELAY = 800;
 const MIN_ARCHIVE_CHARS = 30;
@@ -67,6 +72,11 @@ const state = {
   saveChain: Promise.resolve(),
 };
 
+const coarsePointer = window.matchMedia ? window.matchMedia('(pointer: coarse)') : null;
+const noHover = window.matchMedia ? window.matchMedia('(hover: none)') : null;
+const hasVisualViewport = Boolean(window.visualViewport);
+let viewportFrame = null;
+
 // ------------------------------------------------------------- status
 
 function setStatus(kind, text) {
@@ -85,11 +95,64 @@ function markSaved() {
 
 function resize() {
   input.style.height = 'auto';
-  input.style.height = `${input.scrollHeight}px`;
+  const mirrorHeight = mirrorText.parentElement ? mirrorText.parentElement.scrollHeight : 0;
+  const nextHeight = Math.max(input.scrollHeight, mirrorHeight, 1);
+  input.style.height = `${nextHeight}px`;
+  syncViewportMetrics();
 }
 
 function syncMirror() {
   mirrorText.textContent = input.value;
+}
+
+function useTouchCompletionUi() {
+  return Boolean(
+    (coarsePointer && coarsePointer.matches)
+    || (noHover && noHover.matches)
+    || ('ontouchstart' in window)
+  );
+}
+
+function updateCompletionBar() {
+  if (!completionBarEl) return;
+  const visible = useTouchCompletionUi() && Boolean(state.ghost);
+  completionBarEl.hidden = !visible;
+  document.body.classList.toggle('completion-visible', visible);
+}
+
+function updateHintCopy() {
+  if (!hintEl) return;
+  hintEl.textContent = t(useTouchCompletionUi() ? 'editor.hintMobile' : 'editor.hint');
+}
+
+function syncViewportMetrics() {
+  const root = document.documentElement;
+  const barHeight = barEl ? Math.ceil(barEl.getBoundingClientRect().height) : 56;
+  root.style.setProperty('--bar-height', `${barHeight}px`);
+
+  if (!hasVisualViewport) {
+    root.style.setProperty('--keyboard-offset', '0px');
+    return;
+  }
+  const vv = window.visualViewport;
+  const overlap = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+  root.style.setProperty('--keyboard-offset', `${overlap}px`);
+}
+
+function keepInputVisible() {
+  if (document.activeElement !== input) return;
+  const top = barEl ? barEl.getBoundingClientRect().height + 8 : 62;
+  const rect = input.getBoundingClientRect();
+  if (rect.top < top) window.scrollBy(0, rect.top - top);
+}
+
+function scheduleViewportSync() {
+  if (viewportFrame !== null) return;
+  viewportFrame = requestAnimationFrame(() => {
+    viewportFrame = null;
+    syncViewportMetrics();
+    keepInputVisible();
+  });
 }
 
 // -------------------------------------------------------------- ghost
@@ -97,6 +160,7 @@ function syncMirror() {
 function showGhost(text) {
   state.ghost = text;
   ghostEl.textContent = text;
+  updateCompletionBar();
   syncMirror();
   resize();
 }
@@ -105,6 +169,7 @@ function clearGhost() {
   if (!state.ghost) return;
   state.ghost = '';
   ghostEl.textContent = '';
+  updateCompletionBar();
   resize();
 }
 
@@ -343,6 +408,8 @@ function applyPrefs(next = {}) {
     clearTimeout(state.completeTimer);
     cancelCompletion();
   }
+  updateCompletionBar();
+  updateHintCopy();
   resize();
 }
 
@@ -439,6 +506,31 @@ document.addEventListener('selectionchange', () => {
 
 finishBtn.addEventListener('click', () => finalize(false));
 
+completionAcceptEl?.addEventListener('click', () => {
+  acceptGhost();
+  input.focus();
+});
+completionDismissEl?.addEventListener('click', () => {
+  clearGhost();
+  input.focus();
+});
+coarsePointer?.addEventListener('change', () => {
+  updateCompletionBar();
+  updateHintCopy();
+});
+noHover?.addEventListener('change', () => {
+  updateCompletionBar();
+  updateHintCopy();
+});
+
+window.visualViewport?.addEventListener('resize', scheduleViewportSync);
+window.visualViewport?.addEventListener('scroll', scheduleViewportSync);
+window.addEventListener('resize', scheduleViewportSync);
+input.addEventListener('focus', () => {
+  syncViewportMetrics();
+  setTimeout(scheduleViewportSync, 80);
+});
+
 // Flush pending changes when the page goes away. The backup write is the
 // guarantee; the keepalive PUT is best-effort (and skipped over its quota).
 window.addEventListener('pagehide', () => {
@@ -516,7 +608,10 @@ async function init() {
   state.ready = true;
   if (state.dirty) scheduleSave();
   syncMirror();
+  updateCompletionBar();
+  updateHintCopy();
   resize();
+  syncViewportMetrics();
   const end = input.value.length;
   input.setSelectionRange(end, end);
   input.focus();

@@ -13,7 +13,7 @@ function shell({ title, body, lang, t, refresh = 0, script = '' }) {
 <html lang="${lang === 'en' ? 'en' : 'zh-CN'}">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 ${refresh ? `<meta http-equiv="refresh" content="${refresh}">` : ''}
 <title>${escapeHtml(title)} · Writer</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">

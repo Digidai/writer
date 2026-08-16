@@ -12,7 +12,7 @@
 [**在线体验 writer.genedai.md**](https://writer.genedai.md) · [架构](#架构) · [部署](#快速开始) · [English](#english)
 
 > [!WARNING]
-> **writer.genedai.md 是公开演示站（PUBLIC DEMO）**：访客可写入（开放写作），但写入与 AI 补全受速率限制；`/settings` 为站点级设置，在未配置 `WRITER_ACCESS_KEY` 时对访客只读。请不要在演示站写入私密内容。
+> **writer.genedai.md 是公开演示站（PUBLIC DEMO）**：访客可写入（开放写作），但写入与 AI 补全受速率限制；`/settings` 为站点级设置，在未配置 `WRITER_ACCESS_KEY` 时对访客只读；整库 zip 导出与 MCP 端点关闭。请不要在演示站写入私密内容。
 
 <img src="docs/screenshot-editor-light.png#gh-light-mode-only" alt="Writer 编辑器：A4 画布与灰色的 AI 续写建议" width="100%">
 <img src="docs/screenshot-editor-dark.png#gh-dark-mode-only" alt="Writer 编辑器：A4 画布与灰色的 AI 续写建议" width="100%">
@@ -29,7 +29,7 @@ Writer 反过来做减法。它只提供一张随时摊开的纸：你负责写�
 
 **书写。** 页面主体是一张 A4 纸样式的画布。打开即写，内容随输入自动保存到云端与本地，关掉页面、断网、切换标签页都不会丢。正文使用[思源黑体](https://github.com/notofonts/noto-cjk)（Noto Sans SC）排版，拉丁字形取自 Source Sans，中英文混排时字重与基线保持一致。
 
-**联想。** 输入停顿时，AI 会在光标后给出一段浅灰色的续写建议，交互与 Cursor / VS Code 的代码补全一致：`Tab` 采纳，`Esc` 忽略，继续打字则自动消失。它只做轻量的输入辅助，不会改写你已经写下的内容。
+**联想。** 输入停顿时，AI 会在光标后给出一段浅灰色的续写建议，交互与 Cursor / VS Code 的代码补全一致：`Tab` 采纳，`Esc` 忽略，继续打字则自动消失。触屏设备会在建议出现时显示「采纳 / 忽略」底栏，不依赖实体键盘。
 
 **归档。** 一篇内容完成后（点击「完成」、按 `⌘⏎`，或静置数分钟自动触发），归档 Agent 接手：它先查看档案库现有的分类体系、检索相似的旧文，再决定这篇的标题、分类、标签、摘要与排版，最后存为 Markdown 文件。
 
@@ -41,7 +41,7 @@ Writer 反过来做减法。它只提供一张随时摊开的纸：你负责写�
 <td width="50%"><img src="docs/screenshot-reader-light.png#gh-light-mode-only" alt="阅读页"><img src="docs/screenshot-reader-dark.png#gh-dark-mode-only" alt="阅读页"></td>
 </tr>
 <tr>
-<td align="center"><b>/archive</b> 按 Agent 维护的分类陈列，支持检索</td>
+<td align="center"><b>/archive</b> 按 Agent 维护的分类陈列，支持关键词检索；私有模式可切语义检索与 zip 导出</td>
 <td align="center"><b>/d/:id</b> 排版后的正文、决策轨迹与原文件下载</td>
 </tr>
 </table>
@@ -140,7 +140,7 @@ Kimi K2.6 属于 Workers AI 的前沿模型，需要 Workers Paid（$5/月）或
 | --- | --- |
 | 界面语言 | 中文 / English，默认跟随浏览器 |
 | 正文字号 / 主题 | 纸面与阅读页的排版和明暗，浅色深色可以强制指定 |
-| 输入联想 / 灵敏度 | 关闭后不再请求模型；灵敏度决定停顿多久给建议 |
+| 输入联想 / 灵敏度 | 关闭后不再请求模型；灵敏度决定停顿多久给建议（桌面 Tab，触屏底栏「采纳」） |
 | Agent 排版 | 关闭后 Agent 只做分类、标签与摘要，正文一字不动 |
 | 静置自动归档 | 停笔多久后自动归档，可以关掉只保留手动「完成」 |
 
@@ -158,6 +158,32 @@ npx wrangler secret put WRITER_ACCESS_KEY
 
 之后访问 `/unlock` 输入密钥即可（Cookie 有效期 180 天）。解锁密钥只接受表单提交，不进入 URL。设置该 secret 后：实例进入私有模式、设置可写、并使用更宽松的速率限制。
 
+### 语义检索（私有模式）
+
+`GET /api/search` 默认 `mode=keyword`（D1 LIKE）。当配置了 `WRITER_ACCESS_KEY` 时，可使用 `mode=semantic`，由 Workers AI 嵌入 + Vectorize 检索；若 Vectorize 或绑定缺失，会自动回落到关键词检索，不会报 500。
+
+首次启用时创建索引（一次即可）：
+
+```bash
+npx wrangler vectorize create writer-archive --dimensions=1024 --metric=cosine
+```
+
+随后确保 `wrangler.jsonc` 的 `vectorize` 绑定指向 `writer-archive`。公开演示模式不启用语义检索。
+
+### 整库导出（私有模式）
+
+私有模式提供 `GET /api/export`：把已归档 Markdown 打包为 zip（STORE，无压缩）。公开演示模式会返回 403，避免批量下载。
+
+### MCP（私有模式，只读）
+
+Writer 暴露只读 MCP 端点：
+
+- URL: `https://<你的域名>/mcp`
+- Auth: `Authorization: Bearer <WRITER_ACCESS_KEY>`
+- Tools: `list` / `search` / `get`（只读）
+
+当 `WRITER_ACCESS_KEY` 未设置时，`/mcp` 返回 404（不挂载）。
+
 ## 项目结构
 
 ```
@@ -165,7 +191,13 @@ src/
   index.js      路由、API、访问控制、Cron 入口
   pipeline.js   WriterPipeline：归档 Agent 的 Workflow 定义
   agent.js      流水线启动、Cron 巡检、启发式兜底、R2 文件写入
+  export.js     私有模式下的整库 zip 导出
   ai.js         模型声明、工具调用协议、降级逻辑、输入联想
+  semantic.js   向量嵌入、Vectorize 检索与归档索引更新
+  search.js     关键词检索与语义检索结果回填
+  search-endpoint.js /api/search 的模式与回退编排
+  zip.js        零依赖 zip 打包（STORE）
+  mcp.js        私有模式只读 MCP 端点（list/search/get）
   settings.js   实例设置的读写与校验
   markdown.js   零依赖 Markdown 渲染器（先转义再解析）
   html.js       阅读页与解锁页的服务端渲染
@@ -189,10 +221,10 @@ test/           node:test 单元测试
 
 ## 路线图
 
-- [ ] 用 [AI Search](https://developers.cloudflare.com/ai-search/) 索引 R2 中的 Markdown，把关键词检索升级为语义检索
-- [ ] 把档案库暴露为 MCP server，让其他 AI 客户端可以读取自己的写作
-- [ ] 移动端输入体验打磨
-- [ ] 导出全部档案为 zip
+- [x] 用 Workers AI + Vectorize 建立语义检索，把关键词检索升级为语义检索
+- [x] 把档案库暴露为 MCP server，让其他 AI 客户端可以读取自己的写作
+- [x] 移动端输入体验打磨
+- [x] 导出全部档案为 zip
 
 ## 贡献
 
@@ -213,10 +245,10 @@ test/           node:test 单元测试
 
 **Writer is a quiet, input-focused writing surface built entirely on the Cloudflare stack.**
 
-You write on an A4-like canvas; everything else is handled for you. Text autosaves continuously (cloud plus local backup), and an inline AI suggests light continuations as you pause, accepted with `Tab` exactly like code completion in Cursor or VS Code.
+You write on a paper-like canvas; everything else is handled for you. Text autosaves continuously (cloud plus local backup), and an inline AI suggests light continuations as you pause, accepted with `Tab` on desktop or with an `Accept` touch bar on mobile.
 
 When a piece is finished, an archiving agent takes over inside a durable [Cloudflare Workflow](https://developers.cloudflare.com/workflows/). Kimi K2.6 runs a multi-turn tool-use loop: it inspects the archive's existing taxonomy, searches similar past pieces, then files the document with a title, category, tags, summary and clean typesetting, and mirrors a Markdown file to R2. Every agent turn is an independently retried, resumable step, so a model timeout or an evicted isolate never strands a document. The decision trace is saved and visible on each document's page. If Kimi is unavailable the agent falls back to Qwen3; if the agent fails entirely, heuristics take over. User content is never lost or truncated.
 
 The interface speaks Chinese and English, following your browser by default and switchable in settings; the agent writes each document's title, tags and summary in that document's own language. Archived pieces are not read-only: "Modify" turns one back into a draft and re-runs the pipeline when you finish, while "Delete" moves it to a trash you can undo immediately or restore later.
 
-Browse and search everything at `/archive`. No framework, no bundler, no runtime dependencies: what is in `src/` and `public/` is what gets deployed. See [快速开始](#快速开始) for deploy steps (the commands are language-neutral), and [src/ai.js](src/ai.js) to swap models. Note that Kimi K2.6 requires a Workers Paid plan; on the free plan Writer automatically runs on Qwen3 instead.
+Browse and search everything at `/archive`. Keyword search is always on; locked instances also get semantic search (`mode=semantic`), full zip export (`/api/export`), and a read-only MCP endpoint (`/mcp`, Bearer auth with `WRITER_ACCESS_KEY`). No framework, no bundler, no runtime dependencies: what is in `src/` and `public/` is what gets deployed. See [快速开始](#快速开始) for deploy steps (the commands are language-neutral), and [src/ai.js](src/ai.js) to swap models. Note that Kimi K2.6 requires a Workers Paid plan; on the free plan Writer automatically runs on Qwen3 instead.

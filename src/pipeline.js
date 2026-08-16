@@ -12,6 +12,7 @@ import { agentChat } from './ai.js';
 import { storeFile, clip } from './agent.js';
 import { readSettings } from './settings.js';
 import { persistArchive } from './persist.js';
+import { upsertDocumentVector } from './semantic.js';
 
 const MAX_TURNS = 6;
 // Above this size the agent files metadata only and the original text is
@@ -89,6 +90,7 @@ export class WriterPipeline extends WorkflowEntrypoint {
     if (persisted.skipped) return { skipped: doc.id, reason: persisted.reason, turns: trace.length };
 
     await step.do('store-file', () => storeFile(this.env, persisted.final));
+    await step.do('index-vector', () => upsertDocumentVector(this.env, persisted.final));
     return { archived: doc.id, category: persisted.final.category, turns: trace.length };
   }
 
