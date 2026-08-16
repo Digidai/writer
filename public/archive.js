@@ -3,6 +3,7 @@
 import { toast, hideToast } from '/toast.js';
 import { makeT, applyDom, resolveLang, locale } from '/i18n.js';
 import { mountMenu } from '/menu.js';
+import { redirectIfLocked } from '/locked.js';
 
 function storedSettings() {
   try {
@@ -29,10 +30,8 @@ async function load() {
   let data;
   try {
     const res = await fetch('/api/documents?status=archived,processing');
-    if (res.status === 401) {
-      lockedEl.hidden = false;
-      return;
-    }
+    if (await redirectIfLocked(res)) return;
+    if (res.status === 401) { lockedEl.hidden = false; return; }
     if (!res.ok) throw new Error(`list ${res.status}`);
     data = await res.json();
   } catch {
@@ -59,6 +58,7 @@ async function search(q) {
   let data;
   try {
     const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+    if (await redirectIfLocked(res)) return;
     if (!res.ok) return;
     data = await res.json();
   } catch {
@@ -189,6 +189,7 @@ function offerUndo() {
   el_?.querySelector('#undo')?.addEventListener('click', async () => {
     try {
       const res = await fetch(`/api/documents/${id}/restore`, { method: 'POST' });
+      if (await redirectIfLocked(res)) return;
       if (!res.ok) throw new Error(`restore ${res.status}`);
       hideToast();
       load();
@@ -202,6 +203,7 @@ function offerUndo() {
 async function syncLang() {
   try {
     const res = await fetch('/api/settings');
+    if (await redirectIfLocked(res)) return;
     if (!res.ok) return;
     const settings = await res.json();
     localStorage.setItem('writer.settings', JSON.stringify(settings));

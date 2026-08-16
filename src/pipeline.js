@@ -9,8 +9,9 @@
 // decision trace is persisted alongside the document.
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { agentChat } from './ai.js';
-import { deriveTitle, heuristicMeta, storeFile, clip, sanitizeTags } from './agent.js';
+import { storeFile, clip } from './agent.js';
 import { readSettings } from './settings.js';
+import { persistArchive } from './persist.js';
 
 const MAX_TURNS = 6;
 // Above this size the agent files metadata only and the original text is
@@ -84,9 +85,11 @@ export class WriterPipeline extends WorkflowEntrypoint {
       ];
     }
 
-    const finalDoc = await step.do('persist', () => this.persist(doc, finish, trace, settings));
-    await step.do('store-file', () => storeFile(this.env, finalDoc));
-    return { archived: doc.id, category: finalDoc.category, turns: trace.length };
+    const persisted = await step.do('persist', () => persistArchive(this.env, doc, finish, trace, settings));
+    if (persisted.skipped) return { skipped: doc.id, reason: persisted.reason, turns: trace.length };
+
+    await step.do('store-file', () => storeFile(this.env, persisted.final));
+    return { archived: doc.id, category: persisted.final.category, turns: trace.length };
   }
 
   async loadDoc(docId) {
@@ -157,46 +160,6 @@ export class WriterPipeline extends WorkflowEntrypoint {
     return { error: `未知工具: ${call.name}` };
   }
 
-  // Merge the agent's verdict with heuristic fallbacks — user content is
-  // never lost or blocked on the model.
-  async persist(doc, finish, trace, settings = {}) {
-    const fallback = heuristicMeta(doc.content, doc.title);
-    const category = clip(str(finish && finish.category) || fallback.category, 12) || '其他';
-    const keepOriginal = settings.agentFormatting === false;
-    const final = {
-      id: doc.id,
-      title: clip(str(finish && finish.title) || fallback.title, 60),
-      category,
-      tags: sanitizeTags(finish && finish.tags),
-      summary: clip(str(finish && finish.summary) || fallback.summary, 200),
-      formatted: keepOriginal ? doc.content : (str(finish && finish.formatted) || doc.content),
-      created_at: doc.created_at,
-    };
-
-    // The agent must lay text out, not shorten it. Compare with whitespace
-    // collapsed: if real characters went missing, keep the original.
-    const weight = (s) => s.replace(/\s+/g, '').length;
-    if (weight(final.formatted) < weight(doc.content) * 0.9) final.formatted = doc.content;
-
-    const now = new Date().toISOString();
-    final.archived_at = now;
-    await this.env.DB.prepare(
-      `UPDATE documents
-         SET title = ?, category = ?, tags = ?, summary = ?, formatted = ?,
-             agent_trace = ?, status = 'archived', archived_at = ?, updated_at = ?
-       WHERE id = ?`
-    )
-      .bind(
-        final.title, final.category, JSON.stringify(final.tags), final.summary,
-        final.formatted, JSON.stringify(trace), now, now, doc.id
-      )
-      .run();
-    return final;
-  }
-}
-
-function str(v) {
-  return typeof v === 'string' ? v : '';
 }
 
 // ------------------------------------------------------------ prompts
