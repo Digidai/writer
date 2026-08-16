@@ -63,7 +63,7 @@ Writer 反过来做减法。它只提供一张随时摊开的纸：你负责写�
 这样设计带来三件事：
 
 1. **分类体系会生长。** Agent 每次归档前都会先看现有分类和最近的归档，优先复用，必要时才新建。分类不是写死在代码里的枚举，而是随着你写的内容自然演化。
-2. **中断可以恢复。** 每个 Agent 回合都是一个独立重试、可断点续跑的 Workflow step。模型超时、进程被驱逐、D1 抖动，都会从上一个完成的回合继续，而不是把文档卡在「整理中」。Cron 每 10 分钟巡检一次：草稿按 `idleArchiveMinutes × 3`（且至少 2 字）兜底归档；`processing` 超过 15 分钟会重启流水线。编辑器前台静置自动归档仍是 `idleArchiveMinutes × 1`（且至少 30 字）。
+2. **中断可以恢复。** 每个 Agent 回合都是一个独立重试、可断点续跑的 Workflow step。模型超时、进程被驱逐、D1 抖动，都会从上一个完成的回合继续，而不是把文档卡在「整理中」。Cron 每 10 分钟巡检一次：草稿按 `idleArchiveMinutes × 3`（且至少 2 字）兜底归档；`processing` 超过 15 分钟会重启流水线。私有模式下它还会顺带补齐历史归档的语义向量（每轮小批次）。编辑器前台静置自动归档仍是 `idleArchiveMinutes × 1`（且至少 30 字）。
 3. **过程是透明的。** 每次归档的决策轨迹（哪个模型、调用了哪些工具、检索了什么）都会保存下来，在阅读页可以展开查看。
 
 降级路径也是明确的：Kimi 不可用时自动切到 Qwen3；Agent 整体失败时退回启发式规则归档（首行做标题、原文保留）。任何情况下用户写的内容都不会丢失或被截断。
@@ -162,6 +162,17 @@ npx wrangler secret put WRITER_ACCESS_KEY
 
 `GET /api/search` 默认 `mode=keyword`（D1 LIKE）。当配置了 `WRITER_ACCESS_KEY` 时，可使用 `mode=semantic`，由 Workers AI 嵌入 + Vectorize 检索；若 Vectorize 或绑定缺失，会自动回落到关键词检索，不会报 500。
 
+归档成功时，WriterPipeline 会在 `index-vector` 步骤里 upsert 该文档的向量。私有模式的 cron 还会对历史 `archived` 文档做小批量补齐（每轮约 10 篇），用于覆盖 0.5.0 之前的归档或偶发的索引失败。
+
+如需手动触发一轮补齐，可调用：
+
+```bash
+curl -X POST "https://<你的域名>/api/reindex" \
+  -H "Authorization: Bearer <WRITER_ACCESS_KEY>"
+```
+
+返回示例：`{ "indexed": 7, "skipped": 3, "remaining": 42 }`。公开演示模式会返回 `403 { "error": "reindex unavailable in demo" }`。
+
 首次启用时创建索引（一次即可）：
 
 ```bash
@@ -176,11 +187,46 @@ npx wrangler vectorize create writer-archive --dimensions=1024 --metric=cosine
 
 ### MCP（私有模式，只读）
 
-Writer 暴露只读 MCP 端点：
+Writer 的 MCP 端点是**Streamable HTTP（无会话）**，可直接被 Cursor / Claude Code 作为 HTTP MCP server 使用：
 
 - URL: `https://<你的域名>/mcp`
 - Auth: `Authorization: Bearer <WRITER_ACCESS_KEY>`
-- Tools: `list` / `search` / `get`（只读）
+- 传输：`POST` JSON-RPC 2.0（`Content-Type: application/json`）
+- 行为：`GET /mcp` 返回 405（不提供 SSE，不返回 discovery blob，不发 session id）
+- 只读工具：`list` / `search` / `get`
+
+Cursor 示例（`mcp.json`）：
+
+```json
+{
+  "mcpServers": {
+    "writer": {
+      "url": "https://<你的域名>/mcp",
+      "headers": {
+        "Authorization": "Bearer <WRITER_ACCESS_KEY>"
+      }
+    }
+  }
+}
+```
+
+Claude Code HTTP MCP 示例：
+
+```json
+{
+  "mcpServers": {
+    "writer": {
+      "transport": {
+        "type": "streamable-http",
+        "url": "https://<你的域名>/mcp",
+        "headers": {
+          "Authorization": "Bearer <WRITER_ACCESS_KEY>"
+        }
+      }
+    }
+  }
+}
+```
 
 当 `WRITER_ACCESS_KEY` 未设置时，`/mcp` 返回 404（不挂载）。
 

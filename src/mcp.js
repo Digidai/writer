@@ -1,5 +1,10 @@
 import { hydrateArchivedRowsByIds, keywordSearchRows, parseSearchMode } from './search.js';
 import { searchSemanticIds } from './semantic.js';
+import { WRITER_VERSION } from './version.js';
+
+const MCP_SUPPORTED_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
+const CORS_ALLOW_HEADERS = 'Authorization, Accept, Content-Type, Mcp-Session-Id';
+const CORS_ALLOW_METHODS = 'POST, OPTIONS';
 
 const TOOLS = [
   {
@@ -40,49 +45,48 @@ const TOOLS = [
 ];
 
 export async function handleMcpRequest(request, env) {
-  if (!env.WRITER_ACCESS_KEY) return notFound();
-  if (!isAuthorized(request, env.WRITER_ACCESS_KEY)) return unauthorized();
-  if (request.method === 'GET') {
-    return json({
-      name: 'writer-mcp',
-      endpoint: '/mcp',
-      transport: 'streamable-http',
-      auth: 'Bearer WRITER_ACCESS_KEY',
-    });
-  }
-  if (request.method !== 'POST') return json({ error: 'method not allowed' }, 405);
+  if (!env.WRITER_ACCESS_KEY) return notFound(request);
+  if (request.method === 'OPTIONS') return options(request);
+  if (!isAuthorized(request, env.WRITER_ACCESS_KEY)) return unauthorized(request);
+  if (request.method !== 'POST') return methodNotAllowed(request);
 
   let payload;
   try {
     payload = await request.json();
   } catch {
-    return json(rpcError(null, -32700, 'Parse error'));
+    return json(request, rpcError(null, -32700, 'Parse error'));
   }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return json(rpcError(null, -32600, 'Invalid Request'));
+    return json(request, rpcError(null, -32600, 'Invalid Request'));
   }
 
   const response = await handleRpc(payload, env);
-  if (response === null) return new Response(null, { status: 202 });
-  return json(response);
+  if (response === null) return new Response(null, { status: 202, headers: corsHeaders(request) });
+  return json(request, response);
 }
 
 async function handleRpc(payload, env) {
-  const id = Object.prototype.hasOwnProperty.call(payload, 'id') ? payload.id : null;
+  const id = hasOwn(payload, 'id') ? payload.id : null;
+  if (payload.jsonrpc !== '2.0' || typeof payload.method !== 'string') {
+    return rpcError(id, -32600, 'Invalid Request');
+  }
   const method = payload.method;
   const params = payload.params || {};
 
   if (method === 'notifications/initialized') return null;
   if (method === 'initialize') {
+    const clientVersion = typeof params.protocolVersion === 'string' ? params.protocolVersion : '';
     return rpcResult(id, {
-      protocolVersion: '2024-11-05',
-      capabilities: { tools: {} },
-      serverInfo: { name: 'writer', version: '0.5.0' },
+      protocolVersion: negotiateProtocolVersion(clientVersion),
+      capabilities: { tools: {}, resources: {}, prompts: {} },
+      serverInfo: { name: 'writer', version: WRITER_VERSION },
       instructions: 'Read-only archive access. Use list, search, and get tools.',
     });
   }
   if (method === 'ping') return rpcResult(id, {});
   if (method === 'tools/list') return rpcResult(id, { tools: TOOLS });
+  if (method === 'resources/list') return rpcResult(id, { resources: [] });
+  if (method === 'prompts/list') return rpcResult(id, { prompts: [] });
   if (method === 'tools/call') {
     const name = String(params.name || '');
     const args = params.arguments && typeof params.arguments === 'object' ? params.arguments : {};
@@ -211,6 +215,15 @@ function safeEqual(a, b) {
   return diff === 0;
 }
 
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}
+
+function negotiateProtocolVersion(clientVersion) {
+  if (MCP_SUPPORTED_PROTOCOL_VERSIONS.includes(clientVersion)) return clientVersion;
+  return MCP_SUPPORTED_PROTOCOL_VERSIONS[0];
+}
+
 function rpcResult(id, result) {
   return { jsonrpc: '2.0', id, result };
 }
@@ -219,20 +232,51 @@ function rpcError(id, code, message) {
   return { jsonrpc: '2.0', id, error: { code, message } };
 }
 
-function json(data, status = 200) {
+function json(request, data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+    headers: corsHeaders(request, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+    }),
   });
 }
 
-function unauthorized() {
+function unauthorized(request) {
   return new Response('Unauthorized', {
     status: 401,
-    headers: { 'WWW-Authenticate': 'Bearer realm="writer-mcp"' },
+    headers: corsHeaders(request, { 'WWW-Authenticate': 'Bearer realm="writer-mcp"' }),
   });
 }
 
-function notFound() {
-  return new Response('Not found', { status: 404 });
+function notFound(request) {
+  return new Response('Not found', { status: 404, headers: corsHeaders(request) });
+}
+
+function methodNotAllowed(request) {
+  return new Response('Method not allowed', {
+    status: 405,
+    headers: corsHeaders(request, { Allow: CORS_ALLOW_METHODS }),
+  });
+}
+
+function options(request) {
+  return new Response(null, {
+    status: 204,
+    headers: corsHeaders(request, {
+      Allow: CORS_ALLOW_METHODS,
+      'Access-Control-Max-Age': '86400',
+    }),
+  });
+}
+
+function corsHeaders(request, extra = {}) {
+  const headers = new Headers(extra);
+  const origin = request.headers.get('Origin');
+  if (!origin) return headers;
+  headers.set('Access-Control-Allow-Origin', origin);
+  headers.set('Vary', 'Origin');
+  headers.set('Access-Control-Allow-Methods', CORS_ALLOW_METHODS);
+  headers.set('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);
+  return headers;
 }

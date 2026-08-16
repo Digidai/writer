@@ -1,7 +1,8 @@
 export const SEMANTIC_EMBED_MODEL = '@cf/baai/bge-m3';
+const BACKFILL_BATCH_SIZE = 10;
 
 export function semanticFeatureEnabled(env) {
-  return Boolean(env && env.WRITER_ACCESS_KEY);
+  return Boolean(env && env.WRITER_ACCESS_KEY && env.ARCHIVE_INDEX && env.AI);
 }
 
 export function buildSemanticSource(doc) {
@@ -27,7 +28,7 @@ export function firstEmbeddingVector(payload) {
 }
 
 export async function searchSemanticIds(env, q, { limit = 50 } = {}) {
-  if (!semanticFeatureEnabled(env) || !env.ARCHIVE_INDEX || !env.AI) return null;
+  if (!semanticFeatureEnabled(env)) return null;
   const vector = await embedText(env, q);
   if (!vector) return null;
 
@@ -57,7 +58,7 @@ export async function searchSemanticIds(env, q, { limit = 50 } = {}) {
 }
 
 export async function upsertDocumentVector(env, doc) {
-  if (!semanticFeatureEnabled(env) || !env.ARCHIVE_INDEX || !env.AI) return false;
+  if (!semanticFeatureEnabled(env)) return false;
   const source = buildSemanticSource(doc);
   if (!source) return false;
   const vector = await embedText(env, source);
@@ -83,7 +84,7 @@ export async function upsertDocumentVector(env, doc) {
 }
 
 export async function deleteDocumentVector(env, id) {
-  if (!semanticFeatureEnabled(env) || !env.ARCHIVE_INDEX || typeof id !== 'string') return false;
+  if (!semanticFeatureEnabled(env) || typeof id !== 'string') return false;
   try {
     if (typeof env.ARCHIVE_INDEX.deleteByIds === 'function') {
       await env.ARCHIVE_INDEX.deleteByIds([id]);
@@ -98,6 +99,27 @@ export async function deleteDocumentVector(env, id) {
     console.warn(`vector delete failed for ${id}`, err);
     return false;
   }
+}
+
+export async function backfillArchiveVectors(env, { limit = BACKFILL_BATCH_SIZE } = {}) {
+  if (!semanticFeatureEnabled(env)) return { indexed: 0, skipped: 0, remaining: 0 };
+
+  const safeLimit = Math.max(1, Math.min(Number(limit) || BACKFILL_BATCH_SIZE, 50));
+  const docs = await loadBackfillBatch(env, safeLimit);
+  if (docs.length === 0) return { indexed: 0, skipped: 0, remaining: 0 };
+
+  let indexed = 0;
+  let skipped = 0;
+  for (const doc of docs) {
+    const ok = await upsertDocumentVector(env, doc);
+    if (ok) indexed += 1;
+    else skipped += 1;
+    await markBackfillAttempt(env, doc.id, { indexed: ok });
+  }
+
+  const remaining = await countBackfillRemaining(env);
+  if (remaining === null) return { indexed, skipped };
+  return { indexed, skipped, remaining };
 }
 
 async function embedText(env, text) {
@@ -129,4 +151,78 @@ function normalizeVector(vector) {
     out.push(n);
   }
   return out.length > 0 ? out : null;
+}
+
+async function loadBackfillBatch(env, limit) {
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT id, title, summary, content, formatted, category, archived_at
+         FROM documents
+        WHERE status = 'archived'
+          AND (vector_indexed_at IS NULL OR vector_indexed_at < COALESCE(archived_at, ''))
+        ORDER BY
+          CASE WHEN vector_indexed_at IS NULL THEN 0 ELSE 1 END,
+          CASE WHEN vector_index_attempted_at IS NULL THEN 0 ELSE 1 END,
+          COALESCE(vector_index_attempted_at, archived_at, updated_at, created_at) ASC
+        LIMIT ?`
+    )
+      .bind(limit)
+      .all();
+    return results || [];
+  } catch {
+    const { results } = await env.DB.prepare(
+      `SELECT id, title, summary, content, formatted, category, archived_at
+         FROM documents
+        WHERE status = 'archived'
+        ORDER BY COALESCE(archived_at, updated_at, created_at) ASC
+        LIMIT ?`
+    )
+      .bind(limit)
+      .all();
+    return results || [];
+  }
+}
+
+async function markBackfillAttempt(env, id, { indexed }) {
+  const now = new Date().toISOString();
+  try {
+    if (indexed) {
+      await env.DB.prepare(
+        `UPDATE documents
+            SET vector_indexed_at = ?, vector_index_attempted_at = ?
+          WHERE id = ?`
+      )
+        .bind(now, now, id)
+        .run();
+      return;
+    }
+    await env.DB.prepare(
+      `UPDATE documents
+          SET vector_index_attempted_at = ?
+        WHERE id = ?`
+    )
+      .bind(now, id)
+      .run();
+  } catch {
+    // Legacy DBs may not have tracking columns yet; skip metadata update.
+  }
+}
+
+async function countBackfillRemaining(env) {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT COUNT(*) AS remaining
+         FROM documents
+        WHERE status = 'archived'
+          AND (vector_indexed_at IS NULL OR vector_indexed_at < COALESCE(archived_at, ''))`
+    ).first();
+    return asCount(row && row.remaining);
+  } catch {
+    return null;
+  }
+}
+
+function asCount(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
 }

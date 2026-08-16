@@ -12,9 +12,11 @@ import { updateSettings } from './settings-endpoint.js';
 import { updateDocument } from './document-update.js';
 import { resolveLang } from '../public/i18n.js';
 import { handleExportRequest } from './export.js';
-import { deleteDocumentVector } from './semantic.js';
+import { backfillArchiveVectors, deleteDocumentVector } from './semantic.js';
 import { handleMcpRequest } from './mcp.js';
 import { searchDocumentsData } from './search-endpoint.js';
+import { reopenDocument, restoreDocument } from './archive-actions.js';
+import { handleReindexRequest } from './reindex.js';
 
 export { WriterPipeline } from './pipeline.js';
 
@@ -60,6 +62,9 @@ export default {
 
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(sweepIdleDrafts(env));
+    ctx.waitUntil(backfillArchiveVectors(env).catch((err) => {
+      console.error('semantic backfill failed', err);
+    }));
   },
 };
 
@@ -79,6 +84,7 @@ async function handleApi(request, env, ctx, url) {
   if (path === '/api/export' && (method === 'GET' || method === 'HEAD')) {
     return handleExportRequest(request, env);
   }
+  if (path === '/api/reindex' && method === 'POST') return handleReindexRequest(env);
   if (path === '/api/complete' && method === 'POST') {
     const limited = await enforceRateLimit(request, {
       bucket: 'complete',
@@ -172,29 +178,6 @@ async function listDocuments(env, url) {
   return json({ documents: (results || []).map((r) => publicDoc(r)) });
 }
 
-// Editing an archive entry: it becomes a draft again and comes back to
-// the editor. Finishing it re-runs the agent, so the archive stays the
-// agent's to organize.
-async function reopenDocument(env, id) {
-  const row = await env.DB.prepare('SELECT * FROM documents WHERE id = ?').bind(id).first();
-  if (!row) return json({ error: 'not found' }, 404);
-  if (row.status === 'processing') return json({ error: 'processing', status: 'processing' }, 409);
-  if (row.status === 'deleted') return json({ error: 'deleted', status: 'deleted' }, 409);
-
-  // Edit what the reader saw: the agent's typeset version when there is one.
-  const content = row.formatted || row.content || '';
-  const now = new Date().toISOString();
-  const result = await env.DB.prepare(
-    `UPDATE documents SET status = 'draft', content = ?, updated_at = ?, archived_at = NULL
-      WHERE id = ? AND status IN ('archived', 'draft')`
-  )
-    .bind(content, now, id)
-    .run();
-  if (result.meta.changes === 0) return json({ error: 'conflict' }, 409);
-
-  return json({ id, status: 'draft', content, updated_at: now });
-}
-
 // Deleting is reversible by default: the row moves to the trash and the
 // R2 file stays put. `?permanent=1` erases a trashed document for good.
 async function deleteDocument(env, id, url) {
@@ -228,21 +211,6 @@ async function deleteDocument(env, id, url) {
   await env.DB.prepare('DELETE FROM documents WHERE id = ? AND status = ?').bind(id, 'deleted').run();
   await deleteDocumentVector(env, id);
   return json({ id, status: 'erased' });
-}
-
-async function restoreDocument(env, id) {
-  const result = await env.DB.prepare(
-    `UPDATE documents
-        SET status = CASE WHEN archived_at IS NULL THEN 'draft' ELSE 'archived' END,
-            deleted_at = NULL, updated_at = ?
-      WHERE id = ? AND status = 'deleted'`
-  )
-    .bind(new Date().toISOString(), id)
-    .run();
-  if (result.meta.changes === 0) return json({ error: 'not in trash' }, 404);
-
-  const row = await env.DB.prepare('SELECT status FROM documents WHERE id = ?').bind(id).first();
-  return json({ id, status: row ? row.status : 'archived' });
 }
 
 async function searchDocuments(env, url) {
