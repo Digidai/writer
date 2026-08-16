@@ -359,6 +359,12 @@ a { color: inherit; }
   pointer-events: none;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .completion-bar {
+    display: none;
+  }
+}
+
 .completion-action {
   pointer-events: auto;
   min-height: 44px;

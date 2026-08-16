@@ -109,7 +109,6 @@ function useTouchCompletionUi() {
   return Boolean(
     (coarsePointer && coarsePointer.matches)
     || (noHover && noHover.matches)
-    || ('ontouchstart' in window)
   );
 }
 
