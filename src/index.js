@@ -12,7 +12,7 @@ import { updateSettings } from './settings-endpoint.js';
 import { updateDocument } from './document-update.js';
 import { resolveLang } from '../public/i18n.js';
 import { handleExportRequest } from './export.js';
-import { deleteDocumentVector } from './semantic.js';
+import { backfillArchiveVectors, deleteDocumentVector, upsertDocumentVector } from './semantic.js';
 import { handleMcpRequest } from './mcp.js';
 import { searchDocumentsData } from './search-endpoint.js';
 
@@ -60,6 +60,9 @@ export default {
 
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(sweepIdleDrafts(env));
+    ctx.waitUntil(backfillArchiveVectors(env).catch((err) => {
+      console.error('semantic backfill failed', err);
+    }));
   },
 };
 
@@ -79,6 +82,7 @@ async function handleApi(request, env, ctx, url) {
   if (path === '/api/export' && (method === 'GET' || method === 'HEAD')) {
     return handleExportRequest(request, env);
   }
+  if (path === '/api/reindex' && method === 'POST') return reindexArchiveVectors(env);
   if (path === '/api/complete' && method === 'POST') {
     const limited = await enforceRateLimit(request, {
       bucket: 'complete',
@@ -191,6 +195,7 @@ async function reopenDocument(env, id) {
     .bind(content, now, id)
     .run();
   if (result.meta.changes === 0) return json({ error: 'conflict' }, 409);
+  if (row.status === 'archived') await deleteDocumentVector(env, id);
 
   return json({ id, status: 'draft', content, updated_at: now });
 }
@@ -242,11 +247,30 @@ async function restoreDocument(env, id) {
   if (result.meta.changes === 0) return json({ error: 'not in trash' }, 404);
 
   const row = await env.DB.prepare('SELECT status FROM documents WHERE id = ?').bind(id).first();
+  if (row && row.status === 'archived') {
+    try {
+      const archived = await env.DB.prepare(
+        `SELECT id, title, summary, content, formatted, category, archived_at
+           FROM documents
+          WHERE id = ? AND status = 'archived'`
+      )
+        .bind(id)
+        .first();
+      if (archived) await upsertDocumentVector(env, archived);
+    } catch (err) {
+      console.error(`restore: vector upsert failed for ${id}`, err);
+    }
+  }
   return json({ id, status: row ? row.status : 'archived' });
 }
 
 async function searchDocuments(env, url) {
   return json(await searchDocumentsData(env, url, { mapDoc: (row) => publicDoc(row), limit: 50 }));
+}
+
+async function reindexArchiveVectors(env) {
+  if (!env.WRITER_ACCESS_KEY) return json({ error: 'reindex unavailable in demo' }, 403);
+  return json(await backfillArchiveVectors(env, { limit: 10 }));
 }
 
 async function finalizeDocument(env, id) {

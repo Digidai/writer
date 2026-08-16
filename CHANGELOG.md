@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.8.0] - 2026-08-16
+
+私有实例补齐：语义索引回填 + MCP 传输修正，并合并 0.5.2 hygiene。
+
+### Added
+- **语义向量回填（私有模式）**
+  - 新增 `backfillArchiveVectors`：按小批次为历史 `archived` 文档补齐向量索引（默认约 10 条）
+  - cron 现在在巡检草稿/卡住流程之外，也会异步触发语义向量回填
+  - 新增 `POST /api/reindex`（私有模式）：手动执行一轮回填，返回 `indexed/skipped/remaining`
+  - `reopen`（archived -> draft）时删除该文档向量；从回收站恢复为 archived 时重新 upsert 向量
+- 新增迁移 `0002_vector_backfill_tracking.sql`（可选回填元数据列）
+
+### Changed
+- **MCP 端点改为可被标准客户端使用的无会话 Streamable HTTP**
+  - `/mcp` 在 `WRITER_ACCESS_KEY` 缺失时继续返回 404
+  - Bearer 鉴权保持必需（常数时间比较）
+  - `POST /mcp` 支持 JSON-RPC：`initialize`、`notifications/initialized`、`ping`、`tools/list`、`tools/call`
+  - 新增 `resources/list` 与 `prompts/list`（空列表）
+  - 协议版本协商支持：`2024-11-05`、`2025-03-26`、`2025-06-18`
+  - `GET /mcp` 和 `DELETE /mcp` 统一为 405（不再返回 discovery JSON，不提供独立 SSE）
+  - 端点保持 stateless：忽略 `Mcp-Session-Id`，不创建会话
+  - 增加 MCP 预检所需 CORS 头（Authorization/Accept/Content-Type/Mcp-Session-Id）
+- MCP `serverInfo.version` 不再硬编码旧版本，改为共享版本常量
+
+### Fixed
+- 移除失效开发依赖 `lxgw-wenkai-screen-webfont`（字体早已切换到 Noto Sans SC）
+
+### Tests
+- 新增覆盖：demo/locked 下的 `/api/reindex`、`/mcp` 鉴权与方法行为、MCP initialize/tools/list、`reopen` 删除向量
+
 ## [0.5.1] - 2026-08-16
 
 修复：桌面端不再因误判触控能力而显示补全「采纳 / 忽略」操作条。
