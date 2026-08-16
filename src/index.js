@@ -4,8 +4,12 @@
 // janitor. Archiving itself runs in the WriterPipeline workflow.
 import { launchPipeline, sweepIdleDrafts, deriveTitle, markdownFile, fileKey } from './agent.js';
 import { complete } from './ai.js';
-import { renderDocumentPage, renderNotFoundPage, renderUnlockPage } from './html.js';
-import { readSettings, writeSettings } from './settings.js';
+import { renderDocumentPage, renderNotFoundPage } from './html.js';
+import { readSettings } from './settings.js';
+import { handleUnlock, requireAccess } from './access.js';
+import { enforceRateLimit } from './rate-limit.js';
+import { updateSettings } from './settings-endpoint.js';
+import { updateDocument } from './document-update.js';
 import { resolveLang } from '../public/i18n.js';
 
 export { WriterPipeline } from './pipeline.js';
@@ -13,14 +17,24 @@ export { WriterPipeline } from './pipeline.js';
 const MAX_CONTENT = 200_000;
 const MAX_CONTEXT = 4_000;
 // A 'processing' row this stale means its workflow died; relaunch it.
-const STALE_PROCESSING_MS = 5 * 60 * 1000;
+const STALE_PROCESSING_MS = 15 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const { pathname } = url;
 
-    if (pathname === '/unlock') return handleUnlock(request, env, url);
+    if (pathname === '/unlock') {
+      return handleUnlock(request, env, url, {
+        consumeUnlockAttempt: (req) => enforceRateLimit(req, {
+          bucket: 'unlock',
+          limit: 10,
+          windowMs: FIFTEEN_MINUTES_MS,
+        }),
+      });
+    }
 
     const denied = requireAccess(request, env);
     if (denied) return denied;
@@ -47,10 +61,22 @@ async function handleApi(request, env, ctx, url) {
   const path = url.pathname.replace(/\/+$/, '');
   const method = request.method;
 
-  if (path === '/api/documents' && method === 'POST') return createDocument(request, env);
+  if (path === '/api/documents' && method === 'POST') {
+    const limited = await limitDocumentWrites(request, env);
+    if (limited) return limited;
+    return createDocument(request, env);
+  }
   if (path === '/api/documents' && method === 'GET') return listDocuments(env, url);
   if (path === '/api/search' && method === 'GET') return searchDocuments(env, url);
-  if (path === '/api/complete' && method === 'POST') return handleComplete(request, env);
+  if (path === '/api/complete' && method === 'POST') {
+    const limited = await enforceRateLimit(request, {
+      bucket: 'complete',
+      limit: env.WRITER_ACCESS_KEY ? 60 : 20,
+      windowMs: HOUR_MS,
+    });
+    if (limited) return limited;
+    return handleComplete(request, env);
+  }
   if (path === '/api/settings' && method === 'GET') return json(await readSettings(env));
   if (path === '/api/settings' && method === 'PUT') return updateSettings(request, env);
 
@@ -58,21 +84,35 @@ async function handleApi(request, env, ctx, url) {
   if (m) {
     const [, id, sub] = m;
     if (!sub && method === 'GET') return getDocument(env, id);
-    if (!sub && method === 'PUT') return updateDocument(request, env, id);
-    if (!sub && method === 'DELETE') return deleteDocument(env, id, url);
-    if (sub === 'finalize' && method === 'POST') return finalizeDocument(env, id);
-    if (sub === 'reopen' && method === 'POST') return reopenDocument(env, id);
-    if (sub === 'restore' && method === 'POST') return restoreDocument(env, id);
+    if (!sub && method === 'PUT') {
+      const limited = await limitDocumentWrites(request, env);
+      if (limited) return limited;
+      return updateDocument(request, env, id, { maxContent: MAX_CONTENT });
+    }
+    if (!sub && method === 'DELETE') {
+      const limited = await limitDocumentWrites(request, env);
+      if (limited) return limited;
+      return deleteDocument(env, id, url);
+    }
+    if (sub === 'finalize' && method === 'POST') {
+      const limited = await limitDocumentWrites(request, env);
+      if (limited) return limited;
+      return finalizeDocument(env, id);
+    }
+    if (sub === 'reopen' && method === 'POST') {
+      const limited = await limitDocumentWrites(request, env);
+      if (limited) return limited;
+      return reopenDocument(env, id);
+    }
+    if (sub === 'restore' && method === 'POST') {
+      const limited = await limitDocumentWrites(request, env);
+      if (limited) return limited;
+      return restoreDocument(env, id);
+    }
     if (sub === 'file' && method === 'GET') return downloadFile(env, id);
   }
 
   return json({ error: 'not found' }, 404);
-}
-
-async function updateSettings(request, env) {
-  const body = await readJson(request);
-  if (!body || typeof body !== 'object') return json({ error: 'invalid body' }, 400);
-  return json(await writeSettings(env, body));
 }
 
 async function createDocument(request, env) {
@@ -92,31 +132,6 @@ async function createDocument(request, env) {
   return json({ id, status: 'draft', created_at: now, updated_at: now }, 201);
 }
 
-async function updateDocument(request, env, id) {
-  const body = await readJson(request);
-  if (typeof (body && body.content) !== 'string') return json({ error: 'content required' }, 400);
-  if (body.content.length > MAX_CONTENT) return json({ error: 'content too large' }, 413);
-
-  // Optional optimistic-concurrency guard: the client sends back the
-  // updated_at it last saw; a mismatch means another tab wrote first.
-  const rev = typeof body.rev === 'string' && body.rev ? body.rev : null;
-  const now = new Date().toISOString();
-  const sql = rev
-    ? `UPDATE documents SET content = ?, title = ?, updated_at = ? WHERE id = ? AND status = 'draft' AND updated_at = ?`
-    : `UPDATE documents SET content = ?, title = ?, updated_at = ? WHERE id = ? AND status = 'draft'`;
-  const binds = rev
-    ? [body.content, deriveTitle(body.content), now, id, rev]
-    : [body.content, deriveTitle(body.content), now, id];
-  const result = await env.DB.prepare(sql).bind(...binds).run();
-
-  if (result.meta.changes === 0) {
-    const row = await env.DB.prepare('SELECT status FROM documents WHERE id = ?').bind(id).first();
-    if (!row) return json({ error: 'not found' }, 404);
-    if (row.status !== 'draft') return json({ error: 'not a draft', status: row.status }, 409);
-    return json({ error: 'conflict', status: 'draft' }, 409);
-  }
-  return json({ id, status: 'draft', updated_at: now });
-}
 
 async function getDocument(env, id) {
   const row = await env.DB.prepare('SELECT * FROM documents WHERE id = ?').bind(id).first();
@@ -337,78 +352,12 @@ async function pageLang(request, env) {
   return resolveLang(pref, request.headers.get('Accept-Language'));
 }
 
-// ------------------------------------------------------ Access control
-
-// Optional single-key lock: `wrangler secret put WRITER_ACCESS_KEY`.
-// Unlock once per browser at /unlock. Unset = open instance.
-function requireAccess(request, env) {
-  const key = env.WRITER_ACCESS_KEY;
-  if (!key) return null;
-
-  const cookie = request.headers.get('Cookie') || '';
-  const m = cookie.match(/(?:^|;\s*)writer_key=([^;]+)/);
-  if (m) {
-    let given = null;
-    try {
-      given = decodeURIComponent(m[1]);
-    } catch {
-      given = null; // undecodable cookie = no cookie
-    }
-    if (given !== null && safeEqual(given, key)) return null;
-  }
-
-  const auth = request.headers.get('Authorization') || '';
-  if (auth.startsWith('Bearer ') && safeEqual(auth.slice(7), key)) return null;
-
-  return json({ error: 'locked', hint: 'visit /unlock' }, 401);
-}
-
-async function handleUnlock(request, env, url) {
-  const key = env.WRITER_ACCESS_KEY;
-  if (!key) return redirect(url, '/');
-
-  let given = url.searchParams.get('key') || '';
-  if (!given && request.method === 'POST') {
-    try {
-      const form = await request.formData();
-      given = String(form.get('key') || '');
-    } catch {
-      given = '';
-    }
-  }
-
-  // The lock sits in front of everything, so the stored preference is not
-  // readable here; go by what the browser asks for.
-  const lang = resolveLang('auto', request.headers.get('Accept-Language'));
-
-  if (!given) {
-    return new Response(renderUnlockPage(false, lang), {
-      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
-    });
-  }
-  if (!safeEqual(given, key)) {
-    return new Response(renderUnlockPage(true, lang), {
-      status: 403,
-      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
-    });
-  }
-
-  const headers = new Headers({ Location: '/', 'Cache-Control': 'no-store' });
-  headers.append(
-    'Set-Cookie',
-    `writer_key=${encodeURIComponent(key)}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=15552000`
-  );
-  return new Response(null, { status: 302, headers });
-}
-
-function safeEqual(a, b) {
-  const enc = new TextEncoder();
-  const ab = enc.encode(String(a));
-  const bb = enc.encode(String(b));
-  if (ab.length !== bb.length) return false;
-  let diff = 0;
-  for (let i = 0; i < ab.length; i++) diff |= ab[i] ^ bb[i];
-  return diff === 0;
+async function limitDocumentWrites(request, env) {
+  return enforceRateLimit(request, {
+    bucket: 'documents-write',
+    limit: env.WRITER_ACCESS_KEY ? 300 : 30,
+    windowMs: HOUR_MS,
+  });
 }
 
 // ------------------------------------------------------------ Helpers
@@ -462,8 +411,4 @@ function htmlResponse(html, status = 200) {
     status,
     headers: { 'Content-Type': 'text/html; charset=utf-8' },
   });
-}
-
-function redirect(base, to) {
-  return Response.redirect(new URL(to, base).toString(), 302);
 }

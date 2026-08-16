@@ -2,6 +2,7 @@
 // trash. Deletion is reversible, so it asks once and then offers undo.
 import { toast } from '/toast.js';
 import { makeT, resolveLang } from '/i18n.js';
+import { redirectIfLocked } from '/locked.js';
 
 const t = makeT(resolveLang(storedLang(), navigator.language));
 
@@ -21,6 +22,7 @@ document.querySelector('[data-action="edit"]')?.addEventListener('click', async 
   button.disabled = true;
   try {
     const res = await fetch(`/api/documents/${id}/reopen`, { method: 'POST' });
+    if (await redirectIfLocked(res)) return;
     if (res.status === 409) {
       const data = await res.json().catch(() => ({}));
       toast(t(data.status === 'processing' ? 'reader.editBusy' : 'reader.editUnavailable'));
@@ -44,6 +46,7 @@ document.querySelector('[data-action="delete"]')?.addEventListener('click', asyn
   button.disabled = true;
   try {
     const res = await fetch(`/api/documents/${id}`, { method: 'DELETE' });
+    if (await redirectIfLocked(res)) return;
     if (!res.ok) throw new Error(`delete ${res.status}`);
     sessionStorage.setItem('writer.justDeleted', id);
     location.href = '/archive';

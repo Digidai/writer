@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.1] - 2026-08-16
+
+公开演示模式（writer.genedai.md）安全收口：保持可写，但不再无门槛放开。
+
+### Changed
+- **公开演示模式明确化**：当 `WRITER_ACCESS_KEY` 未设置时，实例保持开放写入，但 `PUT /api/settings` 返回 403（访客只读站点设置）
+- **解锁流程收紧**：`GET /unlock` 仅渲染表单，解锁密钥只接受 `POST` 的 `formData.key`；`?key=` 不再参与解锁或写 Cookie（与 0.2.0 “密钥不再进入 URL” 对齐）
+- **速率限制改为 Cache API**（按 `CF-Connecting-IP`）：  
+  - `POST /unlock`: 10 / 15 分钟  
+  - `POST /api/complete`: 私有模式 60/小时，演示模式 20/小时  
+  - 文档写入相关（POST/PUT/DELETE documents、finalize/reopen/restore 合并）：私有模式 300/小时，演示模式 30/小时  
+  - 超限返回 `429` + `Retry-After`
+- **客户端锁态跳转**：任意 API 返回 `401 { error: "locked" }` 时，编辑器/归档/设置/阅读页动作统一跳转 `/unlock`
+- `finalize` 里对 stale `processing` 的重启阈值与 cron 兜底统一为 **15 分钟**
+
+### Fixed
+- `PUT /api/documents/:id` 现在强制要求 `rev`，缺失或空值返回 `400 { "error": "rev required" }`，避免省略 `rev` 时的 last-write-wins
+- Workflow 持久化阶段增加状态守卫：仅当文档仍为 `processing` 才能归档；若命中 0 行则跳过归档写入与文件写入，并在 trace 记录 skip
+
+### Tests
+- 新增覆盖：解锁查询参数不写 Cookie、persist guard、`rev required`、demo settings 403、rate-limit 429（含 fake cache）
+
 ## [0.4.0] - 2026-08-15
 
 界面收敛。

@@ -7,6 +7,7 @@
 import { toast } from '/toast.js';
 import { makeT, applyDom, resolveLang, locale } from '/i18n.js';
 import { mountMenu } from '/menu.js';
+import { redirectIfLocked } from '/locked.js';
 
 const input = document.getElementById('input');
 const mirrorText = document.getElementById('mirror-text');
@@ -142,6 +143,7 @@ async function requestCompletion() {
       body: JSON.stringify({ context: value.slice(-2000) }),
       signal: ac.signal,
     });
+    if (await redirectIfLocked(res)) return;
     if (!res.ok) return;
     const { text } = await res.json();
     if (!text || seq !== state.completeSeq) return;
@@ -182,7 +184,7 @@ async function doSave() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content }),
       });
-      if (res.status === 401) return setStatus('locked', t('editor.keyNeeded'));
+      if (await redirectIfLocked(res)) return;
       if (!res.ok) throw new Error(`save ${res.status}`);
       const data = await res.json();
       store.docId = data.id;
@@ -193,7 +195,7 @@ async function doSave() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content, rev: state.rev }),
       });
-      if (res.status === 401) return setStatus('locked', t('editor.keyNeeded'));
+      if (await redirectIfLocked(res)) return;
       if (res.status === 404 || res.status === 409) {
         // Archived, gone, or written by another tab — carry the local
         // text into a fresh draft rather than overwrite anyone.
@@ -226,6 +228,7 @@ async function flushExact(content) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content }),
       });
+      if (await redirectIfLocked(res)) return false;
       if (!res.ok) return false;
       const data = await res.json();
       store.docId = data.id;
@@ -237,6 +240,7 @@ async function flushExact(content) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content, rev: state.rev }),
     });
+    if (await redirectIfLocked(res)) return false;
     if (res.status === 404 || res.status === 409) {
       store.docId = null;
       state.rev = null;
@@ -270,7 +274,7 @@ async function finalize(auto = false) {
     }
 
     const res = await fetch(`/api/documents/${store.docId}/finalize`, { method: 'POST' });
-    if (res.status === 401) return setStatus('locked', t('editor.keyNeeded'));
+    if (await redirectIfLocked(res)) return;
     if (!res.ok && res.status !== 202) throw new Error(`finalize ${res.status}`);
     const data = await res.json().catch(() => ({}));
 
@@ -331,6 +335,7 @@ async function loadPrefs() {
   }
   try {
     const res = await fetch('/api/settings');
+    if (await redirectIfLocked(res)) return;
     if (!res.ok) return;
     const server = await res.json();
     applyPrefs(server);
@@ -457,7 +462,7 @@ async function init() {
   if (id) {
     try {
       const res = await fetch(`/api/documents/${id}`);
-      if (res.status === 401) { state.ready = true; return setStatus('locked', t('editor.keyNeeded')); }
+      if (await redirectIfLocked(res)) { state.ready = true; return; }
       if (res.ok) {
         const doc = await res.json();
         if (doc.status === 'draft') {

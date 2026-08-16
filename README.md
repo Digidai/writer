@@ -11,6 +11,9 @@
 
 [**在线体验 writer.genedai.md**](https://writer.genedai.md) · [架构](#架构) · [部署](#快速开始) · [English](#english)
 
+> [!WARNING]
+> **writer.genedai.md 是公开演示站（PUBLIC DEMO）**：访客可写入（开放写作），但写入与 AI 补全受速率限制；`/settings` 为站点级设置，在未配置 `WRITER_ACCESS_KEY` 时对访客只读。请不要在演示站写入私密内容。
+
 <img src="docs/screenshot-editor-light.png#gh-light-mode-only" alt="Writer 编辑器：A4 画布与灰色的 AI 续写建议" width="100%">
 <img src="docs/screenshot-editor-dark.png#gh-dark-mode-only" alt="Writer 编辑器：A4 画布与灰色的 AI 续写建议" width="100%">
 
@@ -60,7 +63,7 @@ Writer 反过来做减法。它只提供一张随时摊开的纸：你负责写�
 这样设计带来三件事：
 
 1. **分类体系会生长。** Agent 每次归档前都会先看现有分类和最近的归档，优先复用，必要时才新建。分类不是写死在代码里的枚举，而是随着你写的内容自然演化。
-2. **中断可以恢复。** 每个 Agent 回合都是一个独立重试、可断点续跑的 Workflow step。模型超时、进程被驱逐、D1 抖动，都会从上一个完成的回合继续，而不是把文档卡在「整理中」。Cron 每 10 分钟巡检一次，认领任何掉队的文档。
+2. **中断可以恢复。** 每个 Agent 回合都是一个独立重试、可断点续跑的 Workflow step。模型超时、进程被驱逐、D1 抖动，都会从上一个完成的回合继续，而不是把文档卡在「整理中」。Cron 每 10 分钟巡检一次：草稿按 `idleArchiveMinutes × 3`（且至少 2 字）兜底归档；`processing` 超过 15 分钟会重启流水线。编辑器前台静置自动归档仍是 `idleArchiveMinutes × 1`（且至少 30 字）。
 3. **过程是透明的。** 每次归档的决策轨迹（哪个模型、调用了哪些工具、检索了什么）都会保存下来，在阅读页可以展开查看。
 
 降级路径也是明确的：Kimi 不可用时自动切到 Qwen3；Agent 整体失败时退回启发式规则归档（首行做标题、原文保留）。任何情况下用户写的内容都不会丢失或被截断。
@@ -145,13 +148,15 @@ Kimi K2.6 属于 Workers AI 的前沿模型，需要 Workers Paid（$5/月）或
 
 ### 访问密钥
 
-公开部署的实例任何人都能写入。如果想上锁：
+`WRITER_ACCESS_KEY` 不设置时，实例是**公开演示模式**（writer.genedai.md 当前就是这样）：任何访客都可写入文档，`/api/settings` 对访客只读，写入与补全有速率限制。请不要在该模式写私密内容。
+
+如果你要改为私有模式（单一共享密钥）：
 
 ```bash
 npx wrangler secret put WRITER_ACCESS_KEY
 ```
 
-之后访问一次 `/unlock` 输入密钥即可（Cookie 有效期 180 天）。不设置该 secret 则为开放实例。
+之后访问 `/unlock` 输入密钥即可（Cookie 有效期 180 天）。解锁密钥只接受表单提交，不进入 URL。设置该 secret 后：实例进入私有模式、设置可写、并使用更宽松的速率限制。
 
 ## 项目结构
 

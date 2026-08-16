@@ -4,6 +4,7 @@
 import { toast } from '/toast.js';
 import { makeT, applyDom, resolveLang, locale } from '/i18n.js';
 import { mountMenu } from '/menu.js';
+import { redirectIfLocked } from '/locked.js';
 
 const FIELDS = [
   {
@@ -120,6 +121,7 @@ async function save(key, value) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ [key]: value }),
     });
+    if (await redirectIfLocked(res)) return;
     if (!res.ok) throw new Error(`settings ${res.status}`);
     settings = await res.json();
     applyAll();
@@ -162,6 +164,7 @@ let trashDocs = [];
 async function loadTrash() {
   try {
     const res = await fetch('/api/documents?status=deleted');
+    if (await redirectIfLocked(res)) return;
     if (res.status === 401) {
       lockedEl.hidden = false;
       return;
@@ -210,6 +213,7 @@ async function act(doc, kind) {
     const res = kind === 'restore'
       ? await fetch(`/api/documents/${doc.id}/restore`, { method: 'POST' })
       : await fetch(`/api/documents/${doc.id}?permanent=1`, { method: 'DELETE' });
+    if (await redirectIfLocked(res)) return;
     if (!res.ok) throw new Error(`${kind} ${res.status}`);
     toast(t(kind === 'restore' ? 'settings.toastRestored' : 'settings.toastErased'));
     loadTrash();
@@ -255,6 +259,7 @@ async function init() {
 
   try {
     const res = await fetch('/api/settings');
+    if (await redirectIfLocked(res)) return;
     if (res.status === 401) {
       lockedEl.hidden = false;
       return;
