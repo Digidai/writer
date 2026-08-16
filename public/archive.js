@@ -7,13 +7,15 @@ import { redirectIfLocked } from '/locked.js';
 
 function storedSettings() {
   try {
-    return JSON.parse(localStorage.getItem('writer.settings') || '{}');
+    const parsed = JSON.parse(localStorage.getItem('writer.settings') || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
     return {};
   }
 }
 
-let lang = resolveLang(storedSettings().language, navigator.language);
+let settings = storedSettings();
+let lang = resolveLang(settings.language, navigator.language);
 let t = makeT(lang);
 
 const processingEl = document.getElementById('processing');
@@ -179,6 +181,29 @@ function textSpan(className, s) {
   return span;
 }
 
+function prefsChanged(next) {
+  if (!next || typeof next !== 'object') return false;
+  return ['language', 'theme', 'fontSize'].some(
+    (key) => Object.prototype.hasOwnProperty.call(next, key) && next[key] !== settings[key]
+  );
+}
+
+function applyPrefs(next = {}) {
+  settings = { ...settings, ...next };
+  const root = document.documentElement;
+  if (settings.theme === 'light' || settings.theme === 'dark') root.dataset.theme = settings.theme;
+  else delete root.dataset.theme;
+  root.dataset.size = settings.fontSize || 'standard';
+
+  lang = resolveLang(settings.language, navigator.language);
+  t = makeT(lang);
+  root.lang = lang === 'en' ? 'en' : 'zh-CN';
+  applyDom(document, t);
+  root.dataset.i18nReady = 'true';
+  mountMenu(t);
+  document.title = `${t('archive.title')} · Writer`;
+}
+
 // Arriving here right after a delete: offer to undo it.
 function offerUndo() {
   const id = sessionStorage.getItem('writer.justDeleted');
@@ -200,29 +225,27 @@ function offerUndo() {
 }
 
 // The stored copy paints first; the server copy is authoritative.
-async function syncLang() {
+async function syncPrefs() {
   try {
     const res = await fetch('/api/settings');
     if (await redirectIfLocked(res)) return;
     if (!res.ok) return;
-    const settings = await res.json();
-    localStorage.setItem('writer.settings', JSON.stringify(settings));
-    const next = resolveLang(settings.language, navigator.language);
-    if (next === lang) return;
-    lang = next;
-    t = makeT(lang);
-    document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
-    applyDom(document, t);
-    mountMenu(t);
-    load();
+    const server = await res.json();
+    if (prefsChanged(server)) {
+      applyPrefs(server);
+      load();
+    }
+    try {
+      localStorage.setItem('writer.settings', JSON.stringify(server));
+    } catch {
+      /* private mode: keep running from memory */
+    }
   } catch {
     /* offline: the cached language stands */
   }
 }
 
-applyDom(document, t);
-mountMenu(t);
-document.title = `${t('archive.title')} · Writer`;
+applyPrefs();
 load();
 offerUndo();
-syncLang();
+syncPrefs();

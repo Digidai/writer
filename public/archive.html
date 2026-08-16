@@ -1,16 +1,17 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>归档 · Writer</title>
+<title>Archive · Writer</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/fonts/noto-sans-sc.css">
 <link rel="stylesheet" href="/style.css">
 <script>try{var s=JSON.parse(localStorage.getItem('writer.settings')||'{}');
 if(s.theme==='light'||s.theme==='dark')document.documentElement.dataset.theme=s.theme;
 if(s.fontSize)document.documentElement.dataset.size=s.fontSize;
-var l=s.language==='zh'||s.language==='en'?s.language:((navigator.language||'').toLowerCase().indexOf('zh')===0?'zh':'en');
+var h=(navigator.language||'').toLowerCase();
+var l=s.language==='zh'||s.language==='en'?s.language:(h&&h.includes('zh')?'zh':'en');
 document.documentElement.lang=l==='en'?'en':'zh-CN';}catch(e){}</script>
 </head>
 <body class="archive-body">
@@ -21,15 +22,15 @@ document.documentElement.lang=l==='en'?'en':'zh-CN';}catch(e){}</script>
 </header>
 
 <main class="archive">
-  <h1 class="archive-title" data-i18n="archive.title">归档</h1>
-  <p class="archive-sub" data-i18n="archive.sub">写完的内容由 Agent 自动分类、解析与排版，静静躺在这里。</p>
+  <h1 class="archive-title" data-i18n="archive.title">Archive</h1>
+  <p class="archive-sub" data-i18n="archive.sub">Finished pieces, classified, parsed and typeset by the agent.</p>
 
-  <input class="search" id="search" type="search" data-i18n-placeholder="archive.search" placeholder="检索档案…" autocomplete="off">
+  <input class="search" id="search" type="search" data-i18n-placeholder="archive.search" placeholder="Search the archive…" autocomplete="off">
 
   <section class="processing" id="processing" hidden></section>
   <div id="groups"></div>
-  <p class="empty" id="empty" data-i18n-html="archive.empty" hidden>还没有归档。去<a href="/">写点什么</a>吧。</p>
-  <p class="empty" id="locked" data-i18n-html="common.locked" hidden>这台 Writer 已上锁，请先<a href="/unlock">解锁</a>。</p>
+  <p class="empty" id="empty" data-i18n-html="archive.empty" hidden>Nothing archived yet. Go <a href="/">write something</a>.</p>
+  <p class="empty" id="locked" data-i18n-html="common.locked" hidden>This Writer is locked. Please <a href="/unlock">unlock</a> it first.</p>
 </main>
 
 <div class="toast" id="toast" hidden></div>

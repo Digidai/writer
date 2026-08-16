@@ -36,8 +36,8 @@ test('resolveLang follows the hint when set to auto', () => {
   assert.equal(resolveLang('auto', 'en-US,en;q=0.9'), 'en');
   assert.equal(resolveLang('auto', 'zh-CN,zh;q=0.9'), 'zh');
   assert.equal(resolveLang('auto', 'fr-FR'), 'en');
-  assert.equal(resolveLang('auto', ''), 'zh');
-  assert.equal(resolveLang(undefined, undefined), 'zh');
+  assert.equal(resolveLang('auto', ''), 'en');
+  assert.equal(resolveLang(undefined, undefined), 'en');
   assert.equal(resolveLang('klingon', 'en'), 'en');
 });
 
@@ -48,9 +48,9 @@ test('t interpolates and falls back gracefully', () => {
   assert.equal(t('does.not.exist'), 'does.not.exist');
 });
 
-test('an unknown language falls back to Chinese', () => {
+test('an unknown language falls back to English', () => {
   const t = makeT('klingon');
-  assert.equal(t('nav.archive'), '归档');
+  assert.equal(t('nav.archive'), 'Archive');
 });
 
 test('locale maps to a real Intl locale', () => {
