@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.1] - 2026-08-16
+
+修复移动端补全操作条可见性与底部固定元素键盘偏移叠加问题。
+
 ## [0.9.0] - 2026-08-16
 
 补齐测试覆盖：restore/vector 生命周期、search helpers、reader 转义与 cron janitor。
