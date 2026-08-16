@@ -64,8 +64,17 @@ const trashCountEl = document.getElementById('trash-count');
 const trashEmptyEl = document.getElementById('trash-empty');
 const lockedEl = document.getElementById('locked');
 
-let settings = {};
-let lang = 'zh';
+function storedSettings() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem('writer.settings') || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+let settings = storedSettings();
+let lang = resolveLang(settings.language, navigator.language);
 let t = makeT(lang);
 
 // --------------------------------------------------------------- render
@@ -149,12 +158,29 @@ function applyAll() {
   else delete root.dataset.theme;
   root.dataset.size = settings.fontSize || 'standard';
   root.lang = lang === 'en' ? 'en' : 'zh-CN';
+  root.dataset.i18nReady = 'true';
   document.title = `${t('settings.title')} · Writer`;
 
   applyDom(document, t);
   mountMenu(t);
   render();
   renderTrash();
+}
+
+function settingsChanged(next) {
+  if (!next || typeof next !== 'object') return false;
+  const tracked = [
+    'language',
+    'fontSize',
+    'theme',
+    'completion',
+    'completionDelay',
+    'agentFormatting',
+    'idleArchiveMinutes',
+  ];
+  return tracked.some(
+    (key) => Object.prototype.hasOwnProperty.call(next, key) && next[key] !== settings[key]
+  );
 }
 
 // ---------------------------------------------------------------- trash
@@ -250,11 +276,6 @@ function textSpan(className, s) {
 // ------------------------------------------------------------------ init
 
 async function init() {
-  try {
-    settings = JSON.parse(localStorage.getItem('writer.settings') || '{}');
-  } catch {
-    settings = {};
-  }
   applyAll();
 
   try {
@@ -264,8 +285,17 @@ async function init() {
       lockedEl.hidden = false;
       return;
     }
-    settings = await res.json();
-    applyAll();
+    const server = await res.json();
+    const changed = settingsChanged(server);
+    settings = { ...settings, ...server };
+    if (changed) applyAll();
+    else {
+      try {
+        localStorage.setItem('writer.settings', JSON.stringify(settings));
+      } catch {
+        /* private mode: keep running from memory */
+      }
+    }
   } catch {
     toast(t('settings.toastCached'));
   }

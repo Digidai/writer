@@ -20,6 +20,15 @@ const SAVE_DELAY = 800;
 const MIN_ARCHIVE_CHARS = 30;
 const KEEPALIVE_LIMIT = 60_000; // keepalive request body quota is 64 KiB
 
+function readStoredSettings() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem('writer.settings') || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 // Instance settings, mirrored from the server (see /settings). The cached
 // copy applies immediately; the fetched copy wins once it lands.
 const prefs = {
@@ -30,8 +39,9 @@ const prefs = {
   fontSize: 'standard',
   theme: 'system',
 };
+Object.assign(prefs, readStoredSettings());
 
-let lang = resolveLang('auto', navigator.language);
+let lang = resolveLang(prefs.language, navigator.language);
 let t = makeT(lang);
 
 const store = {
@@ -306,8 +316,16 @@ async function finalize(auto = false) {
 
 // ------------------------------------------------------------ settings
 
-function applyPrefs(next) {
-  Object.assign(prefs, next || {});
+function prefsChanged(next) {
+  if (!next || typeof next !== 'object') return false;
+  for (const key of Object.keys(prefs)) {
+    if (Object.prototype.hasOwnProperty.call(next, key) && next[key] !== prefs[key]) return true;
+  }
+  return false;
+}
+
+function applyPrefs(next = {}) {
+  Object.assign(prefs, next);
   const root = document.documentElement;
   if (prefs.theme === 'light' || prefs.theme === 'dark') root.dataset.theme = prefs.theme;
   else delete root.dataset.theme;
@@ -317,6 +335,7 @@ function applyPrefs(next) {
   t = makeT(lang);
   root.lang = lang === 'en' ? 'en' : 'zh-CN';
   applyDom(document, t);
+  root.dataset.i18nReady = 'true';
   mountMenu(t);
   if (statusEl.className === 'status ') setStatus('', t('editor.ready'));
 
@@ -329,17 +348,16 @@ function applyPrefs(next) {
 
 async function loadPrefs() {
   try {
-    applyPrefs(JSON.parse(localStorage.getItem('writer.settings') || '{}'));
-  } catch {
-    /* no cache yet */
-  }
-  try {
     const res = await fetch('/api/settings');
     if (await redirectIfLocked(res)) return;
     if (!res.ok) return;
     const server = await res.json();
-    applyPrefs(server);
-    localStorage.setItem('writer.settings', JSON.stringify(server));
+    if (prefsChanged(server)) applyPrefs(server);
+    try {
+      localStorage.setItem('writer.settings', JSON.stringify(server));
+    } catch {
+      /* private mode: keep running from memory */
+    }
   } catch {
     /* offline: the cached copy stands */
   }
@@ -455,7 +473,7 @@ setInterval(() => {
 // ---------------------------------------------------------------- init
 
 async function init() {
-  applyPrefs({});
+  applyPrefs();
   setStatus('', t('editor.ready'));
   loadPrefs();
   const id = store.docId;

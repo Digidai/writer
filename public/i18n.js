@@ -68,7 +68,7 @@ export const MESSAGES = {
     'settings.groupAI': 'AI 辅助',
     'settings.groupArchive': '归档',
     'settings.language': '界面语言',
-    'settings.languageDesc': '默认跟随浏览器的语言',
+    'settings.languageDesc': '默认是英文；自动模式跟随浏览器语言',
     'settings.fontSize': '正文字号',
     'settings.fontSizeDesc': '纸面与阅读页的正文大小',
     'settings.theme': '主题',
@@ -174,7 +174,7 @@ export const MESSAGES = {
     'settings.groupAI': 'AI assistance',
     'settings.groupArchive': 'Archiving',
     'settings.language': 'Interface language',
-    'settings.languageDesc': 'Follows your browser by default',
+    'settings.languageDesc': 'English is the default; Auto follows your browser language',
     'settings.fontSize': 'Text size',
     'settings.fontSizeDesc': 'Body text on the page and in the reader',
     'settings.theme': 'Theme',
@@ -224,14 +224,14 @@ export const LANGS = ['zh', 'en'];
 export function resolveLang(pref, hint) {
   if (LANGS.includes(pref)) return pref;
   const h = String(hint || '').toLowerCase();
-  if (!h) return 'zh';
+  if (!h) return 'en';
   return h.includes('zh') ? 'zh' : 'en';
 }
 
 export function makeT(lang) {
-  const table = MESSAGES[lang] || MESSAGES.zh;
+  const table = MESSAGES[lang] || MESSAGES.en;
   return function t(key, vars) {
-    let s = table[key] ?? MESSAGES.zh[key] ?? key;
+    let s = table[key] ?? MESSAGES.en[key] ?? MESSAGES.zh[key] ?? key;
     if (vars) {
       for (const [name, value] of Object.entries(vars)) {
         s = s.replaceAll(`{${name}}`, String(value));

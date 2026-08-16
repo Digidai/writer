@@ -69,6 +69,16 @@
 
 html { -webkit-text-size-adjust: 100%; }
 
+/* Avoid language flash when modules apply i18n after paint. */
+html:not([data-i18n-ready]) [data-i18n],
+html:not([data-i18n-ready]) [data-i18n-html],
+html:not([data-i18n-ready]) [data-i18n-placeholder],
+html:not([data-i18n-ready]) [data-i18n-title],
+html:not([data-i18n-ready]) #status-text,
+html:not([data-i18n-ready]) #hint {
+  visibility: hidden;
+}
+
 body {
   margin: 0;
   background: var(--desk);
