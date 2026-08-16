@@ -23,10 +23,15 @@ const groupsEl = document.getElementById('groups');
 const emptyEl = document.getElementById('empty');
 const lockedEl = document.getElementById('locked');
 const searchEl = document.getElementById('search');
+const exportBtn = document.getElementById('export-all');
+const searchModeEl = document.getElementById('search-mode');
+const searchModeButtons = Array.from(document.querySelectorAll('.search-mode-button'));
 
 let pollTimer = null;
 let searchTimer = null;
 let searchSeq = 0;
+let searchMode = 'keyword';
+let lockedFeatures = false;
 
 async function load() {
   let data;
@@ -59,7 +64,7 @@ async function search(q) {
   if (!q) return load();
   let data;
   try {
-    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&mode=${encodeURIComponent(searchMode)}`);
     if (await redirectIfLocked(res)) return;
     if (!res.ok) return;
     data = await res.json();
@@ -67,6 +72,10 @@ async function search(q) {
     return;
   }
   if (seq !== searchSeq) return;
+  if (searchMode === 'semantic' && data && data.mode === 'keyword' && data.fallback) {
+    toast(t('archive.semanticFallback'));
+    setSearchMode('keyword');
+  }
 
   clearTimeout(pollTimer);
   processingEl.hidden = true;
@@ -90,6 +99,85 @@ searchEl.addEventListener('input', () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => search(searchEl.value.trim()), 250);
 });
+
+function setSearchMode(mode) {
+  searchMode = mode === 'semantic' ? 'semantic' : 'keyword';
+  for (const button of searchModeButtons) {
+    button.setAttribute('aria-pressed', String(button.dataset.mode === searchMode));
+  }
+}
+
+for (const button of searchModeButtons) {
+  button.addEventListener('click', () => {
+    setSearchMode(button.dataset.mode);
+    const q = searchEl.value.trim();
+    if (q) search(q);
+  });
+}
+
+async function detectLockedFeatures() {
+  if (!exportBtn || !searchModeEl) return;
+  try {
+    const res = await fetch('/api/export', { method: 'HEAD' });
+    if (await redirectIfLocked(res)) return;
+    lockedFeatures = res.status === 204;
+  } catch {
+    lockedFeatures = false;
+  }
+  exportBtn.hidden = !lockedFeatures;
+  searchModeEl.hidden = !lockedFeatures;
+  if (!lockedFeatures) setSearchMode('keyword');
+}
+
+function parseFilename(contentDisposition) {
+  const raw = String(contentDisposition || '');
+  const utf8 = raw.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8 && utf8[1]) {
+    try {
+      return decodeURIComponent(utf8[1]);
+    } catch {
+      /* ignore malformed filename */
+    }
+  }
+  const plain = raw.match(/filename="([^"]+)"/i) || raw.match(/filename=([^;]+)/i);
+  return plain && plain[1] ? plain[1].trim() : 'writer-archive.zip';
+}
+
+async function exportArchive() {
+  if (!exportBtn) return;
+  exportBtn.disabled = true;
+  try {
+    const res = await fetch('/api/export');
+    if (await redirectIfLocked(res)) return;
+    if (res.status === 403 || res.status === 404) {
+      exportBtn.hidden = true;
+      toast(t('archive.exportUnavailable'));
+      return;
+    }
+    if (res.status === 413) {
+      toast(t('archive.exportTooLarge'));
+      return;
+    }
+    if (!res.ok) {
+      toast(t('archive.exportFailed'));
+      return;
+    }
+    const blob = await res.blob();
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = parseFilename(res.headers.get('Content-Disposition'));
+    document.body.append(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(href);
+  } catch {
+    toast(t('archive.exportFailed'));
+  } finally {
+    exportBtn.disabled = false;
+  }
+}
+exportBtn?.addEventListener('click', exportArchive);
 
 function renderProcessing(items) {
   processingEl.replaceChildren();
@@ -246,6 +334,8 @@ async function syncPrefs() {
 }
 
 applyPrefs();
+setSearchMode('keyword');
 load();
 offerUndo();
 syncPrefs();
+detectLockedFeatures();

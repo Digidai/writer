@@ -10,7 +10,7 @@
   "assets": {
     "directory": "public",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*", "/d/*", "/unlock"]
+    "run_worker_first": ["/api/*", "/d/*", "/unlock", "/mcp*"]
   },
 
   // Documents live in D1; archived files are mirrored to R2 as Markdown.
@@ -28,6 +28,12 @@
     {
       "binding": "FILES",
       "bucket_name": "writer-files"
+    }
+  ],
+  "vectorize": [
+    {
+      "binding": "ARCHIVE_INDEX",
+      "index_name": "writer-archive"
     }
   ],
 

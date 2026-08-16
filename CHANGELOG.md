@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.5.0] - 2026-08-16
+
+移动端体验重做 + 私有模式功能扩展（zip 导出、语义检索、只读 MCP）。
+
+### Changed
+- **移动端排版与布局（0.5）**
+  - 所有页面启用 `viewport-fit=cover`，并为顶栏、正文区域、提示条和底部交互加入安全区 inset
+  - 编辑器在窄屏改为“手机纸面”比例：降低最小纸高、缩小内边距与行宽，保留纸面质感但不再出现巨幅空白
+  - 顶栏与关键操作统一达到触控尺寸（≥44px），归档卡片与阅读页操作区在手机上可稳定点击
+  - 移动端不再隐藏保存状态与提示文案；设置页改为窄屏纵向布局，分段选项可换行，不再横向溢出
+  - 阅读页、归档页和设置页消除横向滚动风险，长标题/标签自动换行
+- **触屏补全交互（0.5）**
+  - Ghost suggestion 在触屏设备上新增底部「采纳 / 忽略」操作条；桌面仍保留 `Tab` / `Esc`
+  - 编辑器接入 `visualViewport`：键盘弹出时动态调整底部交互区域，避免建议条被软键盘遮挡
+- **公开演示站设置保存反馈（0.5）**
+  - demo 模式保存设置返回 403 时，前端提示改为明确文案（“公开演示站的设置为只读”），不再显示泛化失败提示
+- **整库 zip 导出（0.5）**
+  - 新增 `GET /api/export`（私有模式）：导出全部 archived Markdown 为 zip（STORE，无压缩）
+  - demo 模式拒绝整库导出（403），避免公共实例被批量下载
+  - 导出文件名按 `archived_at-title.md` 生成，冲突时追加短 id 后缀
+  - 软上限：最多 200 篇或约 20MB，超限返回 413
+- **语义检索（0.6，私有模式）**
+  - `GET /api/search` 新增 `mode=semantic|keyword`；默认 `keyword`
+  - 私有模式下，归档成功后会把 `title + summary + content` 嵌入并 upsert 到 Vectorize；永久删除时移除向量
+  - 语义检索在 Vectorize/绑定不可用时自动回落关键词检索，不会 500
+- **只读 MCP（0.7，私有模式）**
+  - 新增 `/mcp` 端点（Bearer `WRITER_ACCESS_KEY`）
+  - 提供只读工具：`list`、`search`、`get`
+  - 未配置 `WRITER_ACCESS_KEY` 时 `/mcp` 返回 404（不挂载）
+
+### Added
+- 新增 `src/export.js`、`src/zip.js`、`src/semantic.js`、`src/search.js`、`src/mcp.js`
+- 新增中英文 i18n 文案：触屏补全按钮、导出/检索模式提示、demo 只读提示
+
+### Tests
+- 新增测试：demo 导出拒绝、语义检索回落关键词、zip 打包与命名冲突处理
+- 保留并通过已有持久化守卫测试（`persistArchive` 仅允许 `processing -> archived`）
+
 ## [0.4.2] - 2026-08-16
 
 首屏语言不再闪烁，默认语言改为英文。

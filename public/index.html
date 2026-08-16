@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Writer</title>
 <meta name="description" content="A quiet, input-focused writing surface. Drafts save instantly; the rest goes to AI.">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -35,6 +35,10 @@ document.documentElement.lang=l==='en'?'en':'zh-CN';}catch(e){}</script>
   </div>
 </main>
 
+<div class="completion-bar" id="completion-bar" hidden>
+  <button type="button" class="completion-action primary" id="completion-accept" data-i18n="editor.acceptSuggestion">Accept</button>
+  <button type="button" class="completion-action" id="completion-dismiss" data-i18n="editor.dismissSuggestion">Dismiss</button>
+</div>
 <div class="hint" id="hint" data-i18n="editor.hint">Tab accepts · ⌘⏎ archives · idle pieces file themselves</div>
 <div class="toast" id="toast" hidden></div>
 

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Archive · Writer</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/fonts/noto-sans-sc.css">
@@ -26,6 +26,13 @@ document.documentElement.lang=l==='en'?'en':'zh-CN';}catch(e){}</script>
   <p class="archive-sub" data-i18n="archive.sub">Finished pieces, classified, parsed and typeset by the agent.</p>
 
   <input class="search" id="search" type="search" data-i18n-placeholder="archive.search" placeholder="Search the archive…" autocomplete="off">
+  <div class="archive-actions">
+    <div class="search-mode" id="search-mode" hidden>
+      <button type="button" class="search-mode-button" data-mode="keyword" data-i18n="archive.modeKeyword">Keyword</button>
+      <button type="button" class="search-mode-button" data-mode="semantic" data-i18n="archive.modeSemantic">Semantic</button>
+    </div>
+    <button type="button" class="finish export-button" id="export-all" data-i18n="archive.exportZip" hidden>Export .zip</button>
+  </div>
 
   <section class="processing" id="processing" hidden></section>
   <div id="groups"></div>
