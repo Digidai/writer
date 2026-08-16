@@ -94,7 +94,7 @@ body {
   background: var(--desk);
   color: var(--ink);
   font-family: var(--ui);
-  min-height: 100vh;
+  min-height: 100svh;
   min-height: 100dvh;
   overflow-x: hidden;
 }
@@ -135,9 +135,14 @@ a { color: inherit; }
 .bar-nav {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 18px;
 }
 .bar-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   font-size: 13px;
   color: var(--ink-soft);
   text-decoration: none;
@@ -279,7 +284,8 @@ a { color: inherit; }
   border: 0;
   margin: 0;
   resize: none;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: transparent;
   color: var(--ink);
   caret-color: var(--seal);
@@ -842,7 +848,7 @@ a { color: inherit; }
   background: transparent;
   border: 1px solid var(--card-line);
   border-radius: 999px;
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 12px;
   cursor: pointer;
 }
@@ -862,6 +868,12 @@ a { color: inherit; }
   .bar-right {
     gap: 8px;
     min-width: 0;
+  }
+  .bar-nav {
+    gap: 8px;
+  }
+  .bar-nav a {
+    min-height: 40px;
   }
   .status {
     font-size: 11px;
@@ -921,18 +933,12 @@ a { color: inherit; }
   }
 
   .archive,
-  .settings {
-    padding:
-      calc(var(--bar-height) + 20px + var(--safe-top))
-      max(12px, calc(12px + var(--safe-right)))
-      calc(120px + var(--safe-bottom))
-      max(12px, calc(12px + var(--safe-left)));
-  }
+  .settings,
   .reader {
     padding:
-      calc(var(--bar-height) + 16px + var(--safe-top))
+      calc(var(--bar-height) + 12px + var(--safe-top))
       max(10px, calc(10px + var(--safe-right)))
-      calc(120px + var(--safe-bottom))
+      calc(132px + var(--safe-bottom) + var(--keyboard-offset))
       max(10px, calc(10px + var(--safe-left)));
   }
   .archive-title,
@@ -1009,6 +1015,13 @@ a { color: inherit; }
   }
   .doc-actions .danger {
     margin-left: 0;
+  }
+  .pending,
+  .unlock {
+    margin-top: clamp(24px, 8dvh, 72px);
+  }
+  .unlock input {
+    width: min(320px, 92vw);
   }
 }
 

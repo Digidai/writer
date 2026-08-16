@@ -15,6 +15,7 @@ const ghostEl = document.getElementById('ghost');
 const statusEl = document.getElementById('status');
 const statusText = document.getElementById('status-text');
 const finishBtn = document.getElementById('finish');
+const hintEl = document.getElementById('hint');
 const barEl = document.querySelector('.bar');
 const completionBarEl = document.getElementById('completion-bar');
 const completionAcceptEl = document.getElementById('completion-accept');
@@ -94,7 +95,9 @@ function markSaved() {
 
 function resize() {
   input.style.height = 'auto';
-  input.style.height = `${input.scrollHeight}px`;
+  const mirrorHeight = mirrorText.parentElement ? mirrorText.parentElement.scrollHeight : 0;
+  const nextHeight = Math.max(input.scrollHeight, mirrorHeight, 1);
+  input.style.height = `${nextHeight}px`;
   syncViewportMetrics();
 }
 
@@ -115,6 +118,11 @@ function updateCompletionBar() {
   const visible = useTouchCompletionUi() && Boolean(state.ghost);
   completionBarEl.hidden = !visible;
   document.body.classList.toggle('completion-visible', visible);
+}
+
+function updateHintCopy() {
+  if (!hintEl) return;
+  hintEl.textContent = t(useTouchCompletionUi() ? 'editor.hintMobile' : 'editor.hint');
 }
 
 function syncViewportMetrics() {
@@ -401,6 +409,7 @@ function applyPrefs(next = {}) {
     cancelCompletion();
   }
   updateCompletionBar();
+  updateHintCopy();
   resize();
 }
 
@@ -505,8 +514,14 @@ completionDismissEl?.addEventListener('click', () => {
   clearGhost();
   input.focus();
 });
-coarsePointer?.addEventListener('change', updateCompletionBar);
-noHover?.addEventListener('change', updateCompletionBar);
+coarsePointer?.addEventListener('change', () => {
+  updateCompletionBar();
+  updateHintCopy();
+});
+noHover?.addEventListener('change', () => {
+  updateCompletionBar();
+  updateHintCopy();
+});
 
 window.visualViewport?.addEventListener('resize', scheduleViewportSync);
 window.visualViewport?.addEventListener('scroll', scheduleViewportSync);
@@ -594,6 +609,7 @@ async function init() {
   if (state.dirty) scheduleSave();
   syncMirror();
   updateCompletionBar();
+  updateHintCopy();
   resize();
   syncViewportMetrics();
   const end = input.value.length;
