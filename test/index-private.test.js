@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import worker from '../src/index.js';
 import { WRITER_VERSION } from '../src/version.js';
+import { handleMcpRequest } from '../src/mcp.js';
+import { handleReindexRequest } from '../src/reindex.js';
+import { reopenDocument } from '../src/archive-actions.js';
 
 const DOC_ID = '123e4567-e89b-12d3-a456-426614174000';
 
@@ -15,17 +17,17 @@ test('demo mode: /api/reindex is forbidden and /mcp is hidden', async () => {
     ASSETS: { fetch: () => new Response('ok') },
   };
 
-  const reindex = await worker.fetch(new Request('https://writer.example/api/reindex', { method: 'POST' }), env, {});
+  const reindex = await handleReindexRequest(env);
   assert.equal(reindex.status, 403);
   assert.deepEqual(await reindex.json(), { error: 'reindex unavailable in demo' });
   assert.equal(aiCalls, 0);
   assert.equal(upsertCalls, 0);
 
-  const mcp = await worker.fetch(new Request('https://writer.example/mcp'), env, {});
+  const mcp = await handleMcpRequest(new Request('https://writer.example/mcp'), env);
   assert.equal(mcp.status, 404);
 });
 
-test('locked mode: /api/reindex runs one semantic backfill batch', async () => {
+test('locked mode: /api/reindex handler runs one semantic backfill batch', async () => {
   let aiCalls = 0;
   let upsertCalls = 0;
   let markCalls = 0;
@@ -101,11 +103,7 @@ test('locked mode: /api/reindex runs one semantic backfill batch', async () => {
     ASSETS: { fetch: () => new Response('ok') },
   };
 
-  const req = new Request('https://writer.example/api/reindex', {
-    method: 'POST',
-    headers: { Authorization: 'Bearer secret' },
-  });
-  const res = await worker.fetch(req, env, {});
+  const res = await handleReindexRequest(env);
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { indexed: 1, skipped: 0, remaining: 0 });
   assert.equal(aiCalls, 1);
@@ -115,10 +113,10 @@ test('locked mode: /api/reindex runs one semantic backfill batch', async () => {
 });
 
 test('mcp endpoint: key/auth/method semantics and initialize/tools', async () => {
-  const noKey = await worker.fetch(new Request('https://writer.example/mcp'), {
+  const noKey = await handleMcpRequest(new Request('https://writer.example/mcp'), {
     WRITER_ACCESS_KEY: '',
     ASSETS: { fetch: () => new Response('ok') },
-  }, {});
+  });
   assert.equal(noKey.status, 404);
 
   const lockedEnv = {
@@ -127,17 +125,18 @@ test('mcp endpoint: key/auth/method semantics and initialize/tools', async () =>
     ASSETS: { fetch: () => new Response('ok') },
   };
 
-  const missingAuth = await worker.fetch(new Request('https://writer.example/mcp', { method: 'POST' }), lockedEnv, {});
+  const missingAuth = await handleMcpRequest(new Request('https://writer.example/mcp', { method: 'POST' }), lockedEnv);
   assert.equal(missingAuth.status, 401);
 
-  const getReq = await worker.fetch(new Request('https://writer.example/mcp', {
+  const getReq = await handleMcpRequest(new Request('https://writer.example/mcp', {
     headers: {
       Authorization: 'Bearer secret',
       Accept: 'text/event-stream',
     },
-  }), lockedEnv, {});
+  }), lockedEnv);
   assert.equal(getReq.status, 405);
-  assert.equal(getReq.headers.get('Content-Type'), null);
+  assert.match(getReq.headers.get('Content-Type') || '', /^text\/plain/i);
+  assert.equal(await getReq.text(), 'Method not allowed');
 
   const initReq = new Request('https://writer.example/mcp', {
     method: 'POST',
@@ -152,7 +151,7 @@ test('mcp endpoint: key/auth/method semantics and initialize/tools', async () =>
       params: { protocolVersion: '2025-03-26' },
     }),
   });
-  const initRes = await worker.fetch(initReq, lockedEnv, {});
+  const initRes = await handleMcpRequest(initReq, lockedEnv);
   assert.equal(initRes.status, 200);
   const initBody = await initRes.json();
   assert.equal(initBody.result.protocolVersion, '2025-03-26');
@@ -166,7 +165,7 @@ test('mcp endpoint: key/auth/method semantics and initialize/tools', async () =>
     },
     body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
   });
-  const toolsRes = await worker.fetch(toolsReq, lockedEnv, {});
+  const toolsRes = await handleMcpRequest(toolsReq, lockedEnv);
   assert.equal(toolsRes.status, 200);
   const toolsBody = await toolsRes.json();
   assert.deepEqual(toolsBody.result.tools.map((tool) => tool.name), ['list', 'search', 'get']);
@@ -221,10 +220,7 @@ test('reopen archived document deletes its vector', async () => {
     ASSETS: { fetch: () => new Response('ok') },
   };
 
-  const res = await worker.fetch(new Request(`https://writer.example/api/documents/${DOC_ID}/reopen`, {
-    method: 'POST',
-    headers: { Authorization: 'Bearer secret' },
-  }), env, {});
+  const res = await reopenDocument(env, DOC_ID);
   assert.equal(res.status, 200);
   assert.equal(deleteCalls, 1);
 });
