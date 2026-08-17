@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.11.1] - 2026-08-17
+
+公开演示站（writer.genedai.md）的站点设置改为可写：`PUT /api/settings` 在未配置 `WRITER_ACCESS_KEY` 时不再返回 403，与文档写入一样调用 `writeSettings`。默认界面语言仍为 `auto`。静态资源版本参数升级到 `?v=0.11.1`。
+
 ## [0.11.0] - 2026-08-17
 
 重建移动端书写对齐为单一坐标系：舞台改锁 `body.editor-body`（`position: fixed; top: 0; height: var(--app-height)`），`html.editor-stage` 不再 `position: fixed`，也不再写入 `--app-offset-top`（避开 iOS 26 WebKit 键盘收起后 `visualViewport.offsetTop` 滞留）。顶栏改为舞台内 `absolute`，桌面用 `top: var(--bar-height)` 承接，不再用 padding 再让一次顶栏高度；安全区只加在顶栏 padding-top 与桌面侧/底边。横屏手机（粗指针、无悬停、高度 ≤ 500px）走同一套舞台规则，避免掉回桌面 A4。静态资源版本参数升级到 `?v=0.11.0`。

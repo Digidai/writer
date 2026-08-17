@@ -1,10 +1,7 @@
 import { writeSettings } from './settings.js';
 
-// Public demo mode leaves writing open but keeps instance settings read-only.
-// A configured access key switches this back to writable private mode.
+// Instance settings are writable in both public demo and private mode.
 export async function updateSettings(request, env) {
-  if (!env.WRITER_ACCESS_KEY) return json({ error: 'settings read-only in demo' }, 403);
-
   const body = await readJson(request);
   if (!body || typeof body !== 'object') return json({ error: 'invalid body' }, 400);
   return json(await writeSettings(env, body));

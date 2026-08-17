@@ -131,14 +131,13 @@ async function save(key, value) {
       body: JSON.stringify({ [key]: value }),
     });
     if (await redirectIfLocked(res)) return;
-    if (res.status === 403) throw new Error('demo-read-only');
     if (!res.ok) throw new Error(`settings ${res.status}`);
     settings = await res.json();
     applyAll();
-  } catch (err) {
+  } catch {
     settings = { ...settings, [key]: previous };
     applyAll();
-    toast(t(err && err.message === 'demo-read-only' ? 'settings.toastReadOnlyDemo' : 'settings.toastSaveFailed'));
+    toast(t('settings.toastSaveFailed'));
   }
 }
 
