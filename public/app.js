@@ -96,17 +96,24 @@ function markSaved() {
 // ------------------------------------------------------------- layout
 
 function resize() {
-  const sheet = input.parentElement;
-  const sheetStyle = sheet ? getComputedStyle(sheet) : null;
-  const sheetPaddingTop = sheetStyle ? parseFloat(sheetStyle.paddingTop) || 0 : 0;
-  const sheetPaddingBottom = sheetStyle ? parseFloat(sheetStyle.paddingBottom) || 0 : 0;
-  const paperFloor = mobileLayout?.matches && sheet
-    ? Math.max(Math.floor(sheet.clientHeight - sheetPaddingTop - sheetPaddingBottom), 1)
-    : 1;
+  const mirrorHeight = mirrorText.parentElement ? mirrorText.parentElement.scrollHeight : 0;
+  const well = input.parentElement;
+
+  if (mobileLayout?.matches) {
+    const paperFloor = well ? Math.max(Math.floor(well.clientHeight), 1) : 1;
+    const contentHeight = Math.max(mirrorHeight || input.scrollHeight || 0, 1);
+
+    if (contentHeight > paperFloor) {
+      input.style.height = `${contentHeight}px`;
+    } else if (input.style.height) {
+      input.style.height = '';
+    }
+    syncViewportMetrics();
+    return;
+  }
 
   input.style.height = 'auto';
-  const mirrorHeight = mirrorText.parentElement ? mirrorText.parentElement.scrollHeight : 0;
-  const nextHeight = Math.max(input.scrollHeight, mirrorHeight, paperFloor, 1);
+  const nextHeight = Math.max(input.scrollHeight, mirrorHeight, 1);
   input.style.height = `${nextHeight}px`;
   syncViewportMetrics();
 }
