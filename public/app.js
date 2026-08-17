@@ -17,6 +17,7 @@ const statusText = document.getElementById('status-text');
 const finishBtn = document.getElementById('finish');
 const hintEl = document.getElementById('hint');
 const barEl = document.querySelector('.bar');
+const deskEl = document.querySelector('.desk');
 const completionBarEl = document.getElementById('completion-bar');
 const completionAcceptEl = document.getElementById('completion-accept');
 const completionDismissEl = document.getElementById('completion-dismiss');
@@ -74,6 +75,7 @@ const state = {
 
 const coarsePointer = window.matchMedia ? window.matchMedia('(pointer: coarse)') : null;
 const noHover = window.matchMedia ? window.matchMedia('(hover: none)') : null;
+const mobileLayout = window.matchMedia ? window.matchMedia('(max-width: 640px)') : null;
 const hasVisualViewport = Boolean(window.visualViewport);
 let viewportFrame = null;
 
@@ -94,9 +96,17 @@ function markSaved() {
 // ------------------------------------------------------------- layout
 
 function resize() {
+  const sheet = input.parentElement;
+  const sheetStyle = sheet ? getComputedStyle(sheet) : null;
+  const sheetPaddingTop = sheetStyle ? parseFloat(sheetStyle.paddingTop) || 0 : 0;
+  const sheetPaddingBottom = sheetStyle ? parseFloat(sheetStyle.paddingBottom) || 0 : 0;
+  const paperFloor = mobileLayout?.matches && sheet
+    ? Math.max(Math.floor(sheet.clientHeight - sheetPaddingTop - sheetPaddingBottom), 1)
+    : 1;
+
   input.style.height = 'auto';
   const mirrorHeight = mirrorText.parentElement ? mirrorText.parentElement.scrollHeight : 0;
-  const nextHeight = Math.max(input.scrollHeight, mirrorHeight, 1);
+  const nextHeight = Math.max(input.scrollHeight, mirrorHeight, paperFloor, 1);
   input.style.height = `${nextHeight}px`;
   syncViewportMetrics();
 }
@@ -128,6 +138,12 @@ function updateHintCopy() {
       ? 'editor.hintMobile'
       : 'editor.hint';
   hintEl.textContent = t(key);
+}
+
+function updateFinishHintCopy() {
+  if (!finishBtn) return;
+  const key = useTouchCompletionUi() ? 'editor.finishHintTouch' : 'editor.finishHint';
+  finishBtn.title = t(key);
 }
 
 function syncViewportMetrics() {
@@ -417,6 +433,7 @@ function applyPrefs(next = {}) {
   }
   updateCompletionBar();
   updateHintCopy();
+  updateFinishHintCopy();
   resize();
 }
 
@@ -463,6 +480,14 @@ if (channel) {
 
 input.addEventListener('click', () => {
   if (state.yielded) location.reload();
+});
+
+deskEl?.addEventListener('click', (event) => {
+  if (state.yielded) return;
+  if (!(event.target instanceof HTMLElement)) return;
+  if (event.target === input) return;
+  if (event.target.closest('button, a, input, textarea, select, [role="button"]')) return;
+  input.focus();
 });
 
 // -------------------------------------------------------------- events
@@ -524,10 +549,12 @@ completionDismissEl?.addEventListener('click', () => {
 coarsePointer?.addEventListener('change', () => {
   updateCompletionBar();
   updateHintCopy();
+  updateFinishHintCopy();
 });
 noHover?.addEventListener('change', () => {
   updateCompletionBar();
   updateHintCopy();
+  updateFinishHintCopy();
 });
 
 window.visualViewport?.addEventListener('resize', scheduleViewportSync);
