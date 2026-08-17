@@ -25,7 +25,6 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
   --bar-height: calc(70px + var(--safe-top));
-  --keyboard-offset: 0px;
 }
 
 /* Text size, set by the 设置 page via data-size on <html>. */
@@ -76,7 +75,7 @@
 html { -webkit-text-size-adjust: 100%; }
 html {
   scroll-padding-top: calc(var(--bar-height) + 12px);
-  scroll-padding-bottom: calc(var(--keyboard-offset) + 92px + var(--safe-bottom));
+  scroll-padding-bottom: calc(92px + var(--safe-bottom));
 }
 
 /* Avoid language flash when modules apply i18n after paint. */
@@ -253,7 +252,7 @@ a { color: inherit; }
   padding:
     calc(var(--bar-height) + 32px)
     max(20px, calc(20px + var(--safe-right)))
-    calc(136px + var(--safe-bottom) + var(--keyboard-offset))
+    calc(136px + var(--safe-bottom))
     max(20px, calc(20px + var(--safe-left)));
 }
 
@@ -874,11 +873,18 @@ a { color: inherit; }
 /* --------------------------------------------------------- responsive */
 
 @media (max-width: 640px) {
-  .editor-body {
-    --mobile-editor-bottom-gap: calc(48px + var(--safe-bottom) + var(--keyboard-offset));
+  html.editor-stage,
+  body.editor-body {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: var(--app-height, 100dvh);
+    overflow: hidden;
+    overscroll-behavior: none;
   }
-  .editor-body.completion-visible {
-    --mobile-editor-bottom-gap: calc(132px + var(--safe-bottom) + var(--keyboard-offset));
+  body.editor-body {
+    min-height: 0;
+    touch-action: pan-y;
   }
   .wordmark { font-size: 18px; }
   .bar {
@@ -920,59 +926,85 @@ a { color: inherit; }
     right: calc(-2px + var(--safe-right));
   }
 
-  .desk {
-    padding:
-      calc(var(--bar-height) + 12px)
-      max(10px, calc(10px + var(--safe-right)))
-      var(--mobile-editor-bottom-gap)
-      max(10px, calc(10px + var(--safe-left)));
-    min-height: 100svh;
-    min-height: 100dvh;
+  .editor-body .desk {
+    position: absolute;
+    inset: 0;
+    height: 100%;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
+    padding:
+      calc(var(--bar-height) + 10px)
+      max(10px, calc(10px + var(--safe-right)))
+      max(8px, calc(8px + var(--safe-bottom)))
+      max(10px, calc(10px + var(--safe-left)));
   }
-  .sheet {
+  .editor-body .sheet {
     border-radius: 10px;
     flex: 1 1 0;
     min-height: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
   }
-  .well {
+  .editor-body .well {
     flex: 1 1 0;
     min-height: 0;
-    margin: clamp(28px, 8vw, 36px) clamp(20px, 6vw, 24px);
+    margin: clamp(24px, 7vw, 32px) clamp(18px, 5vw, 22px);
+    overflow: hidden;
+    position: relative;
   }
-  .input,
-  .mirror {
+  .editor-body .input,
+  .editor-body .mirror {
     padding: 0;
     line-height: 1.72;
+    min-height: 0;
   }
-  .input {
-    display: block;
+  .editor-body .input {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
-    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    scroll-margin-top: 0;
   }
-  .mirror {
-    min-height: 0;
-    width: 100%;
+  .editor-body .mirror {
+    position: absolute;
     inset: 0;
   }
-  .hint {
+  .editor-body .completion-bar {
+    position: static;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    width: 100%;
+    margin-top: 8px;
+    gap: 8px;
+    justify-content: stretch;
+    pointer-events: auto;
+  }
+  .editor-body .completion-action {
+    flex: 1;
+  }
+  .editor-body .hint {
+    position: static;
+    bottom: auto;
+    left: auto;
+    transform: none;
+    margin-top: 8px;
+    padding: 0;
     font-size: 11px;
     letter-spacing: 0.04em;
-    max-width: 95vw;
+    max-width: none;
+    min-height: 16px;
   }
-  .toast {
+  .editor-body .toast {
+    position: absolute;
+    left: 50%;
+    bottom: 12px;
     max-width: 92vw;
     text-align: center;
-  }
-  .completion-bar {
-    justify-content: stretch;
-  }
-  .completion-action {
-    flex: 1;
   }
 
   .archive,

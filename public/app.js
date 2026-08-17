@@ -97,17 +97,9 @@ function markSaved() {
 
 function resize() {
   const mirrorHeight = mirrorText.parentElement ? mirrorText.parentElement.scrollHeight : 0;
-  const well = input.parentElement;
 
   if (mobileLayout?.matches) {
-    const paperFloor = well ? Math.max(Math.floor(well.clientHeight), 1) : 1;
-    const contentHeight = Math.max(mirrorHeight || input.scrollHeight || 0, 1);
-
-    if (contentHeight > paperFloor) {
-      input.style.height = `${contentHeight}px`;
-    } else if (input.style.height) {
-      input.style.height = '';
-    }
+    if (input.style.height) input.style.height = '';
     syncViewportMetrics();
     return;
   }
@@ -158,17 +150,24 @@ function syncViewportMetrics() {
   const barHeight = barEl ? Math.ceil(barEl.getBoundingClientRect().height) : 56;
   root.style.setProperty('--bar-height', `${barHeight}px`);
 
-  if (!hasVisualViewport) {
-    root.style.setProperty('--keyboard-offset', '0px');
-    return;
-  }
-  const vv = window.visualViewport;
-  const overlap = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
-  root.style.setProperty('--keyboard-offset', `${overlap}px`);
+  const viewportHeight = hasVisualViewport && window.visualViewport
+    ? Math.round(window.visualViewport.height)
+    : Math.round(window.innerHeight);
+  root.style.setProperty('--app-height', `${Math.max(viewportHeight, 1)}px`);
 }
 
 function keepInputVisible() {
   if (document.activeElement !== input) return;
+  if (mobileLayout?.matches) {
+    if (input.selectionStart !== input.selectionEnd) return;
+    if (input.selectionEnd !== input.value.length) return;
+    const visibleBottom = input.scrollTop + input.clientHeight;
+    const targetBottom = input.scrollHeight + 12;
+    if (targetBottom > visibleBottom) {
+      input.scrollTop = targetBottom - input.clientHeight;
+    }
+    return;
+  }
   const top = barEl ? barEl.getBoundingClientRect().height + 8 : 62;
   const rect = input.getBoundingClientRect();
   if (rect.top < top) window.scrollBy(0, rect.top - top);
