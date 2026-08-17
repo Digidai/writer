@@ -50,8 +50,9 @@ test('editor markup wraps mirror/input in well and version-busts assets', async 
   assert.match(indexHtml, new RegExp(`<script type="module" src="/app\\.js\\?v=${versionTag}"></script>`));
   assert.match(
     indexHtml,
-    /<script>try\{var r=document\.documentElement,v=window\.visualViewport;r\.style\.setProperty\('--app-height',Math\.round\(v\?v\.height:window\.innerHeight\)\+'px'\);r\.style\.setProperty\('--app-offset-top',Math\.round\(v\?v\.offsetTop:0\)\+'px'\);\}catch\(e\)\{\}<\/script>/
+    /<script>try\{var r=document\.documentElement,v=window\.visualViewport;r\.style\.setProperty\('--app-height',Math\.round\(v\?v\.height:window\.innerHeight\)\+'px'\);\}catch\(e\)\{\}<\/script>/
   );
+  assert.doesNotMatch(indexHtml, /--app-offset-top/);
 
   assert.match(archiveHtml, new RegExp(`<link rel="stylesheet" href="/style\\.css\\?v=${versionTag}">`));
   assert.match(archiveHtml, new RegExp(`<script type="module" src="/archive\\.js\\?v=${versionTag}"></script>`));
@@ -64,28 +65,43 @@ test('editor markup wraps mirror/input in well and version-busts assets', async 
   assert.match(serverHtml, /src="\/doc\.js\?v=\$\{WRITER_VERSION\}"/);
 });
 
-test('mobile editor CSS locks editor page into visual viewport stage', async () => {
+test('mobile editor CSS uses one body-locked stage', async () => {
   const css = await readFile(new URL('../public/style.css', import.meta.url), 'utf8');
   const stageRule = css.match(/html\.editor-stage\s*\{[^}]+\}/)?.[0] || '';
   const bodyRule = css.match(/body\.editor-body\s*\{[^}]+\}/)?.[0] || '';
+  const barRule = css.match(/\.editor-body \.bar\s*\{[^}]+\}/)?.[0] || '';
+  const deskRule = css.match(/\.editor-body \.desk\s*\{[^}]+\}/)?.[0] || '';
 
   assert.match(
     css,
-    /html\.editor-stage\s*\{[\s\S]*position:\s*fixed;[\s\S]*top:\s*var\(--app-offset-top,\s*0px\);[\s\S]*left:\s*0;[\s\S]*right:\s*0;[\s\S]*width:\s*100%;[\s\S]*height:\s*var\(--app-height,\s*100dvh\);[\s\S]*overflow:\s*hidden;[\s\S]*overscroll-behavior:\s*none;[\s\S]*touch-action:\s*none;/
+    /@media \(max-width:\s*640px\),\s*\(\(hover:\s*none\) and \(pointer:\s*coarse\) and \(max-height:\s*500px\)\)/
   );
   assert.match(
     css,
-    /body\.editor-body\s*\{[\s\S]*height:\s*100%;[\s\S]*overflow:\s*hidden;[\s\S]*overscroll-behavior:\s*none;[\s\S]*touch-action:\s*none;/
+    /html\.editor-stage\s*\{[\s\S]*overflow:\s*hidden;[\s\S]*height:\s*100%;/
   );
-  assert.doesNotMatch(stageRule, /inset\s*:/);
-  assert.doesNotMatch(stageRule, /bottom\s*:/);
-  assert.doesNotMatch(bodyRule, /inset\s*:/);
-  assert.doesNotMatch(bodyRule, /position:\s*fixed;/);
+  assert.doesNotMatch(stageRule, /position:\s*fixed/);
+  assert.doesNotMatch(stageRule, /--app-offset-top/);
+  assert.doesNotMatch(stageRule, /top\s*:/);
+  assert.match(
+    css,
+    /body\.editor-body\s*\{[\s\S]*position:\s*fixed;[\s\S]*top:\s*0;[\s\S]*left:\s*0;[\s\S]*width:\s*100%;[\s\S]*height:\s*var\(--app-height,\s*100dvh\);[\s\S]*overflow:\s*hidden;[\s\S]*overscroll-behavior:\s*none;[\s\S]*touch-action:\s*none;/
+  );
+  assert.doesNotMatch(bodyRule, /--app-offset-top/);
   assert.doesNotMatch(css, /html\.editor-stage,\s*body\.editor-body\s*\{/);
+  assert.doesNotMatch(css, /--app-offset-top/);
   assert.match(
     css,
-    /\.editor-body \.desk\s*\{[\s\S]*position:\s*absolute;[\s\S]*inset:\s*0;[\s\S]*height:\s*100%;[\s\S]*overflow:\s*hidden;[\s\S]*overscroll-behavior:\s*none;[\s\S]*touch-action:\s*none;[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*padding:\s*calc\(var\(--bar-height\) \+ 10px\)/
+    /\.editor-body \.bar\s*\{[\s\S]*position:\s*absolute;[\s\S]*top:\s*0;[\s\S]*left:\s*0;[\s\S]*right:\s*0;/
   );
+  assert.doesNotMatch(barRule, /position:\s*fixed/);
+  assert.match(
+    css,
+    /\.editor-body \.desk\s*\{[\s\S]*position:\s*absolute;[\s\S]*top:\s*var\(--bar-height\);[\s\S]*left:\s*0;[\s\S]*right:\s*0;[\s\S]*bottom:\s*0;[\s\S]*overflow:\s*hidden;[\s\S]*overscroll-behavior:\s*none;[\s\S]*touch-action:\s*none;[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*padding:\s*8px/
+  );
+  assert.doesNotMatch(deskRule, /padding-top:\s*var\(--bar-height\)/);
+  assert.doesNotMatch(deskRule, /padding:\s*calc\(var\(--bar-height\)/);
+  assert.doesNotMatch(deskRule, /--safe-top/);
   assert.doesNotMatch(css, /\.editor-body \.desk\s*\{[\s\S]*min-height:\s*100dvh;/);
   assert.doesNotMatch(css, /--mobile-editor-bottom-gap/);
   assert.doesNotMatch(css, /--keyboard-offset/);
@@ -132,11 +148,11 @@ test('visual viewport drives app height and mobile resize stays CSS-owned', asyn
 
   assert.match(
     appJs,
-    /const viewportHeight = hasVisualViewport && window\.visualViewport[\s\S]*Math\.round\(window\.visualViewport\.height\)[\s\S]*Math\.round\(window\.innerHeight\);/
+    /window\.matchMedia\('\(max-width: 640px\), \(\(hover: none\) and \(pointer: coarse\) and \(max-height: 500px\)\)'\)/
   );
   assert.match(
     appJs,
-    /const viewportOffsetTop = hasVisualViewport && window\.visualViewport[\s\S]*Math\.round\(window\.visualViewport\.offsetTop\)[\s\S]*0;/
+    /const viewportHeight = hasVisualViewport && window\.visualViewport[\s\S]*Math\.round\(window\.visualViewport\.height\)[\s\S]*Math\.round\(window\.innerHeight\);/
   );
   assert.match(
     appJs,
@@ -144,15 +160,17 @@ test('visual viewport drives app height and mobile resize stays CSS-owned', asyn
   );
   assert.match(
     appJs,
-    /root\.style\.setProperty\('--app-offset-top', `\$\{viewportOffsetTop\}px`\);/
+    /root\.style\.setProperty\('--bar-height', `\$\{barHeight\}px`\);/
   );
+  assert.doesNotMatch(appJs, /--app-offset-top/);
+  assert.doesNotMatch(appJs, /offsetTop/);
   assert.match(
     appJs,
     /if \(mobileLayout\?\.matches\) \{[\s\S]*syncViewportMetrics\(\);[\s\S]*return;\s*\}/
   );
   assert.doesNotMatch(
     appJs,
-    /if \(mobileLayout\?\.matches\) \{[\s\S]*input\.style\.height = `\$\{contentHeight\}px`;/ 
+    /if \(mobileLayout\?\.matches\) \{[\s\S]*input\.style\.height = `\$\{contentHeight\}px`;/
   );
   assert.doesNotMatch(appJs, /paperFloor|contentHeight > paperFloor/);
   assert.match(appJs, /input\.style\.height = 'auto';[\s\S]*const nextHeight = Math\.max\(input\.scrollHeight, mirrorHeight, 1\);/);
