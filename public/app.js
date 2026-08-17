@@ -121,7 +121,13 @@ function updateCompletionBar() {
 
 function updateHintCopy() {
   if (!hintEl) return;
-  hintEl.textContent = t(useTouchCompletionUi() ? 'editor.hintMobile' : 'editor.hint');
+  const touchUi = useTouchCompletionUi();
+  const key = touchUi && state.ghost
+    ? 'editor.hintMobileGhost'
+    : touchUi
+      ? 'editor.hintMobile'
+      : 'editor.hint';
+  hintEl.textContent = t(key);
 }
 
 function syncViewportMetrics() {
@@ -160,6 +166,7 @@ function showGhost(text) {
   state.ghost = text;
   ghostEl.textContent = text;
   updateCompletionBar();
+  updateHintCopy();
   syncMirror();
   resize();
 }
@@ -169,6 +176,7 @@ function clearGhost() {
   state.ghost = '';
   ghostEl.textContent = '';
   updateCompletionBar();
+  updateHintCopy();
   resize();
 }
 

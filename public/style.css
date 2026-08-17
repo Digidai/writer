@@ -870,6 +870,12 @@ a { color: inherit; }
 /* --------------------------------------------------------- responsive */
 
 @media (max-width: 640px) {
+  .editor-body {
+    --mobile-editor-bottom-gap: calc(48px + var(--safe-bottom) + var(--keyboard-offset));
+  }
+  .editor-body.completion-visible {
+    --mobile-editor-bottom-gap: calc(132px + var(--safe-bottom) + var(--keyboard-offset));
+  }
   .wordmark { font-size: 18px; }
   .bar {
     min-height: 52px;
@@ -914,15 +920,19 @@ a { color: inherit; }
     padding:
       calc(var(--bar-height) + 12px + var(--safe-top))
       max(10px, calc(10px + var(--safe-right)))
-      calc(132px + var(--safe-bottom) + var(--keyboard-offset))
+      var(--mobile-editor-bottom-gap)
       max(10px, calc(10px + var(--safe-left)));
+    min-height: 100svh;
+    min-height: 100dvh;
   }
   .sheet {
     border-radius: 10px;
+    min-height: calc(100svh - (var(--bar-height) + 12px + var(--safe-top)) - var(--mobile-editor-bottom-gap));
+    min-height: calc(100dvh - (var(--bar-height) + 12px + var(--safe-top)) - var(--mobile-editor-bottom-gap));
   }
   .input,
   .mirror {
-    min-height: clamp(320px, 56dvh, 520px);
+    min-height: 100%;
     padding: clamp(26px, 7vw, 44px) clamp(16px, 6vw, 30px);
     line-height: 1.72;
   }
