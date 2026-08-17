@@ -873,18 +873,23 @@ a { color: inherit; }
 /* --------------------------------------------------------- responsive */
 
 @media (max-width: 640px) {
-  html.editor-stage,
-  body.editor-body {
+  html.editor-stage {
     position: fixed;
-    inset: 0;
+    top: var(--app-offset-top, 0px);
+    left: 0;
+    right: 0;
     width: 100%;
     height: var(--app-height, 100dvh);
     overflow: hidden;
     overscroll-behavior: none;
+    touch-action: none;
   }
   body.editor-body {
+    height: 100%;
     min-height: 0;
-    touch-action: pan-y;
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
   }
   .wordmark { font-size: 18px; }
   .bar {
@@ -931,6 +936,8 @@ a { color: inherit; }
     inset: 0;
     height: 100%;
     overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
     display: flex;
     flex-direction: column;
     padding:
@@ -946,11 +953,13 @@ a { color: inherit; }
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
   }
   .editor-body .well {
     flex: 1 1 0;
     min-height: 0;
-    margin: clamp(24px, 7vw, 32px) clamp(18px, 5vw, 22px);
+    margin: clamp(28px, 8vw, 36px) clamp(20px, 6vw, 24px);
     overflow: hidden;
     position: relative;
   }
@@ -968,6 +977,8 @@ a { color: inherit; }
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     scroll-margin-top: 0;
+    touch-action: pan-y;
+    overscroll-behavior: contain;
   }
   .editor-body .mirror {
     position: absolute;
@@ -988,16 +999,17 @@ a { color: inherit; }
     flex: 1;
   }
   .editor-body .hint {
-    position: static;
-    bottom: auto;
-    left: auto;
+    position: absolute;
+    bottom: 8px;
+    left: 0;
+    right: 0;
     transform: none;
-    margin-top: 8px;
-    padding: 0;
+    margin: 0;
+    padding: 0 12px;
     font-size: 11px;
     letter-spacing: 0.04em;
     max-width: none;
-    min-height: 16px;
+    pointer-events: none;
   }
   .editor-body .toast {
     position: absolute;
