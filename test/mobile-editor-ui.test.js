@@ -48,6 +48,10 @@ test('editor markup wraps mirror/input in well and version-busts assets', async 
   );
   assert.match(indexHtml, new RegExp(`<link rel="stylesheet" href="/style\\.css\\?v=${versionTag}">`));
   assert.match(indexHtml, new RegExp(`<script type="module" src="/app\\.js\\?v=${versionTag}"></script>`));
+  assert.match(
+    indexHtml,
+    /<script>try\{var r=document\.documentElement,v=window\.visualViewport;r\.style\.setProperty\('--app-height',Math\.round\(v\?v\.height:window\.innerHeight\)\+'px'\);r\.style\.setProperty\('--app-offset-top',Math\.round\(v\?v\.offsetTop:0\)\+'px'\);\}catch\(e\)\{\}<\/script>/
+  );
 
   assert.match(archiveHtml, new RegExp(`<link rel="stylesheet" href="/style\\.css\\?v=${versionTag}">`));
   assert.match(archiveHtml, new RegExp(`<script type="module" src="/archive\\.js\\?v=${versionTag}"></script>`));
@@ -62,26 +66,36 @@ test('editor markup wraps mirror/input in well and version-busts assets', async 
 
 test('mobile editor CSS locks editor page into visual viewport stage', async () => {
   const css = await readFile(new URL('../public/style.css', import.meta.url), 'utf8');
+  const stageRule = css.match(/html\.editor-stage\s*\{[^}]+\}/)?.[0] || '';
+  const bodyRule = css.match(/body\.editor-body\s*\{[^}]+\}/)?.[0] || '';
 
   assert.match(
     css,
-    /html\.editor-stage,\s*body\.editor-body\s*\{[\s\S]*position:\s*fixed;[\s\S]*inset:\s*0;[\s\S]*height:\s*var\(--app-height,\s*100dvh\);[\s\S]*overflow:\s*hidden;[\s\S]*overscroll-behavior:\s*none;/
+    /html\.editor-stage\s*\{[\s\S]*position:\s*fixed;[\s\S]*top:\s*var\(--app-offset-top,\s*0px\);[\s\S]*left:\s*0;[\s\S]*right:\s*0;[\s\S]*width:\s*100%;[\s\S]*height:\s*var\(--app-height,\s*100dvh\);[\s\S]*overflow:\s*hidden;[\s\S]*overscroll-behavior:\s*none;[\s\S]*touch-action:\s*none;/
   );
-  assert.match(css, /body\.editor-body\s*\{[\s\S]*touch-action:\s*pan-y;/);
   assert.match(
     css,
-    /\.editor-body \.desk\s*\{[\s\S]*position:\s*absolute;[\s\S]*inset:\s*0;[\s\S]*height:\s*100%;[\s\S]*overflow:\s*hidden;[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*padding:\s*calc\(var\(--bar-height\) \+ 10px\)/
+    /body\.editor-body\s*\{[\s\S]*height:\s*100%;[\s\S]*overflow:\s*hidden;[\s\S]*overscroll-behavior:\s*none;[\s\S]*touch-action:\s*none;/
+  );
+  assert.doesNotMatch(stageRule, /inset\s*:/);
+  assert.doesNotMatch(stageRule, /bottom\s*:/);
+  assert.doesNotMatch(bodyRule, /inset\s*:/);
+  assert.doesNotMatch(bodyRule, /position:\s*fixed;/);
+  assert.doesNotMatch(css, /html\.editor-stage,\s*body\.editor-body\s*\{/);
+  assert.match(
+    css,
+    /\.editor-body \.desk\s*\{[\s\S]*position:\s*absolute;[\s\S]*inset:\s*0;[\s\S]*height:\s*100%;[\s\S]*overflow:\s*hidden;[\s\S]*overscroll-behavior:\s*none;[\s\S]*touch-action:\s*none;[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*padding:\s*calc\(var\(--bar-height\) \+ 10px\)/
   );
   assert.doesNotMatch(css, /\.editor-body \.desk\s*\{[\s\S]*min-height:\s*100dvh;/);
   assert.doesNotMatch(css, /--mobile-editor-bottom-gap/);
   assert.doesNotMatch(css, /--keyboard-offset/);
   assert.match(
     css,
-    /\.editor-body \.sheet\s*\{[\s\S]*flex:\s*1 1 0;[\s\S]*min-height:\s*0;[\s\S]*overflow:\s*hidden;/
+    /\.editor-body \.sheet\s*\{[\s\S]*flex:\s*1 1 0;[\s\S]*min-height:\s*0;[\s\S]*overflow:\s*hidden;[\s\S]*overscroll-behavior:\s*none;[\s\S]*touch-action:\s*none;/
   );
   assert.match(
     css,
-    /\.editor-body \.well\s*\{[\s\S]*flex:\s*1 1 0;[\s\S]*min-height:\s*0;[\s\S]*margin:\s*clamp\(24px,\s*7vw,\s*32px\)\s+clamp\(18px,\s*5vw,\s*22px\);[\s\S]*overflow:\s*hidden;/
+    /\.editor-body \.well\s*\{[\s\S]*flex:\s*1 1 0;[\s\S]*min-height:\s*0;[\s\S]*margin:\s*clamp\(28px,\s*8vw,\s*36px\)\s+clamp\(20px,\s*6vw,\s*24px\);[\s\S]*overflow:\s*hidden;/
   );
   assert.match(
     css,
@@ -89,11 +103,17 @@ test('mobile editor CSS locks editor page into visual viewport stage', async () 
   );
   assert.match(
     css,
-    /\.editor-body \.input\s*\{[\s\S]*position:\s*absolute;[\s\S]*inset:\s*0;[\s\S]*width:\s*100%;[\s\S]*height:\s*100%;[\s\S]*overflow-y:\s*auto;[\s\S]*-webkit-overflow-scrolling:\s*touch;/
+    /\.editor-body \.input\s*\{[\s\S]*position:\s*absolute;[\s\S]*inset:\s*0;[\s\S]*width:\s*100%;[\s\S]*height:\s*100%;[\s\S]*overflow-y:\s*auto;[\s\S]*-webkit-overflow-scrolling:\s*touch;[\s\S]*touch-action:\s*pan-y;[\s\S]*overscroll-behavior:\s*contain;/
   );
+  assert.doesNotMatch(bodyRule, /touch-action:\s*pan-y;/);
   assert.match(css, /\.editor-body \.mirror\s*\{[\s\S]*position:\s*absolute;[\s\S]*inset:\s*0;/);
   assert.match(css, /\.editor-body \.completion-bar\s*\{[\s\S]*position:\s*static;/);
-  assert.match(css, /\.editor-body \.hint\s*\{[\s\S]*position:\s*static;/);
+  assert.match(
+    css,
+    /\.editor-body \.hint\s*\{[\s\S]*position:\s*absolute;[\s\S]*bottom:\s*8px;[\s\S]*pointer-events:\s*none;/
+  );
+  assert.doesNotMatch(css, /\.editor-body \.hint\s*\{[\s\S]*position:\s*static;/);
+  assert.doesNotMatch(css, /\.editor-body \.hint\s*\{[\s\S]*min-height:\s*16px;/);
   assert.match(css, /\.editor-body \.toast\s*\{[\s\S]*position:\s*absolute;[\s\S]*bottom:\s*12px;/);
 });
 
@@ -116,7 +136,15 @@ test('visual viewport drives app height and mobile resize stays CSS-owned', asyn
   );
   assert.match(
     appJs,
+    /const viewportOffsetTop = hasVisualViewport && window\.visualViewport[\s\S]*Math\.round\(window\.visualViewport\.offsetTop\)[\s\S]*0;/
+  );
+  assert.match(
+    appJs,
     /root\.style\.setProperty\('--app-height', `\$\{Math\.max\(viewportHeight, 1\)\}px`\);/
+  );
+  assert.match(
+    appJs,
+    /root\.style\.setProperty\('--app-offset-top', `\$\{viewportOffsetTop\}px`\);/
   );
   assert.match(
     appJs,
@@ -128,6 +156,10 @@ test('visual viewport drives app height and mobile resize stays CSS-owned', asyn
   );
   assert.doesNotMatch(appJs, /paperFloor|contentHeight > paperFloor/);
   assert.match(appJs, /input\.style\.height = 'auto';[\s\S]*const nextHeight = Math\.max\(input\.scrollHeight, mirrorHeight, 1\);/);
+  assert.match(
+    appJs,
+    /document\.addEventListener\('touchmove',[\s\S]*target\.closest\('textarea, button, a'\)[\s\S]*event\.preventDefault\(\);[\s\S]*passive:\s*false/
+  );
 });
 
 test('keepInputVisible scrolls textarea on mobile and not window', async () => {
