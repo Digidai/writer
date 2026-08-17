@@ -872,20 +872,17 @@ a { color: inherit; }
 
 /* --------------------------------------------------------- responsive */
 
-@media (max-width: 640px) {
+@media (max-width: 640px), ((hover: none) and (pointer: coarse) and (max-height: 500px)) {
   html.editor-stage {
-    position: fixed;
-    top: var(--app-offset-top, 0px);
-    left: 0;
-    right: 0;
-    width: 100%;
-    height: var(--app-height, 100dvh);
     overflow: hidden;
-    overscroll-behavior: none;
-    touch-action: none;
+    height: 100%;
   }
   body.editor-body {
-    height: 100%;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: var(--app-height, 100dvh);
     min-height: 0;
     overflow: hidden;
     overscroll-behavior: none;
@@ -895,6 +892,12 @@ a { color: inherit; }
   .bar {
     min-height: 52px;
     padding: calc(6px + var(--safe-top)) calc(12px + var(--safe-right)) 6px calc(12px + var(--safe-left));
+  }
+  .editor-body .bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
   }
   .bar-right {
     gap: 8px;
@@ -933,15 +936,17 @@ a { color: inherit; }
 
   .editor-body .desk {
     position: absolute;
-    inset: 0;
-    height: 100%;
+    top: var(--bar-height);
+    left: 0;
+    right: 0;
+    bottom: 0;
     overflow: hidden;
     overscroll-behavior: none;
     touch-action: none;
     display: flex;
     flex-direction: column;
     padding:
-      calc(var(--bar-height) + 10px)
+      8px
       max(10px, calc(10px + var(--safe-right)))
       max(8px, calc(8px + var(--safe-bottom)))
       max(10px, calc(10px + var(--safe-left)));

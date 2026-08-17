@@ -75,7 +75,9 @@ const state = {
 
 const coarsePointer = window.matchMedia ? window.matchMedia('(pointer: coarse)') : null;
 const noHover = window.matchMedia ? window.matchMedia('(hover: none)') : null;
-const mobileLayout = window.matchMedia ? window.matchMedia('(max-width: 640px)') : null;
+const mobileLayout = window.matchMedia
+  ? window.matchMedia('(max-width: 640px), ((hover: none) and (pointer: coarse) and (max-height: 500px))')
+  : null;
 const hasVisualViewport = Boolean(window.visualViewport);
 let viewportFrame = null;
 
@@ -153,11 +155,7 @@ function syncViewportMetrics() {
   const viewportHeight = hasVisualViewport && window.visualViewport
     ? Math.round(window.visualViewport.height)
     : Math.round(window.innerHeight);
-  const viewportOffsetTop = hasVisualViewport && window.visualViewport
-    ? Math.round(window.visualViewport.offsetTop)
-    : 0;
   root.style.setProperty('--app-height', `${Math.max(viewportHeight, 1)}px`);
-  root.style.setProperty('--app-offset-top', `${viewportOffsetTop}px`);
 }
 
 function keepInputVisible() {

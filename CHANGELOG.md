@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.11.0] - 2026-08-17
+
+重建移动端书写对齐为单一坐标系：舞台改锁 `body.editor-body`（`position: fixed; top: 0; height: var(--app-height)`），`html.editor-stage` 不再 `position: fixed`，也不再写入 `--app-offset-top`（避开 iOS 26 WebKit 键盘收起后 `visualViewport.offsetTop` 滞留）。顶栏改为舞台内 `absolute`，桌面用 `top: var(--bar-height)` 承接，不再用 padding 再让一次顶栏高度；安全区只加在顶栏 padding-top 与桌面侧/底边。横屏手机（粗指针、无悬停、高度 ≤ 500px）走同一套舞台规则，避免掉回桌面 A4。静态资源版本参数升级到 `?v=0.11.0`。
+
 ## [0.10.1] - 2026-08-17
 
 收紧移动端书写舞台：仅锁定 `html.editor-stage`，用 `top: var(--app-offset-top)` + `height: var(--app-height)` 对齐 visualViewport（不再 `inset: 0`），并同步写入 `offsetTop`；舞台/桌面/纸面禁止平移，仅 `.input` 可纵向滚动；首屏内联脚本在 CSS 绘制前设置视口变量；提示条叠在纸面底部，不再占用纸高；`.well` 边距略增。静态资源版本参数升级到 `?v=0.10.1`。
