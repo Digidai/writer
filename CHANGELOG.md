@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.10.0] - 2026-08-17
+
+重建移动端编辑器为「锁定书写舞台」模型：在 `max-width: 640px` 下，`html.editor-stage` 与 `body.editor-body` 固定到 `--app-height`（来自 `visualViewport.height`），彻底锁住页面滚动与橡皮筋回弹；`.desk/.sheet/.well` 改为舞台内纵向布局，唯一滚动容器为 `.input`，移除 `--keyboard-offset` 与 `--mobile-editor-bottom-gap` 文档增高方案，并让补全条/提示条/吐司都定位在舞台内部。同步调整 `resize()`（移动端不再写入 textarea 内联高度）与 `keepInputVisible()`（移动端仅滚动 textarea，不再 `window.scrollBy`），并将静态资源版本参数升级到 `?v=0.10.0`。
+
 ## [0.9.4] - 2026-08-17
 
 修复 iPhone Safari 书写纸面：编辑器新增 `.well` 内层容器承载移动端页边距（由 `margin` 实现，避免 textarea 覆盖父层 inset），移动端 `resize()` 仅在内容溢出 `.well` 时写入高度并在回缩时清除内联高度，避免短纸面循环收缩；同时为静态资源追加版本查询参数（`?v=0.9.4`）以强制刷新 CSS/JS 缓存。

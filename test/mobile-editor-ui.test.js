@@ -42,6 +42,10 @@ test('editor markup wraps mirror/input in well and version-busts assets', async 
     indexHtml,
     /<div class="sheet">\s*<div class="well">\s*<div class="mirror"[\s\S]*<\/div>\s*<textarea class="input"/
   );
+  assert.match(
+    indexHtml,
+    /<main class="desk">[\s\S]*<div class="completion-bar" id="completion-bar" hidden>[\s\S]*<div class="hint" id="hint"/
+  );
   assert.match(indexHtml, new RegExp(`<link rel="stylesheet" href="/style\\.css\\?v=${versionTag}">`));
   assert.match(indexHtml, new RegExp(`<script type="module" src="/app\\.js\\?v=${versionTag}"></script>`));
 
@@ -56,99 +60,82 @@ test('editor markup wraps mirror/input in well and version-busts assets', async 
   assert.match(serverHtml, /src="\/doc\.js\?v=\$\{WRITER_VERSION\}"/);
 });
 
-test('mobile editor CSS uses well margin inset and keeps desktop A4 paper', async () => {
+test('mobile editor CSS locks editor page into visual viewport stage', async () => {
   const css = await readFile(new URL('../public/style.css', import.meta.url), 'utf8');
 
-  assert.doesNotMatch(css, /min-height:\s*clamp\(320px,\s*56dvh,\s*520px\);/);
+  assert.match(
+    css,
+    /html\.editor-stage,\s*body\.editor-body\s*\{[\s\S]*position:\s*fixed;[\s\S]*inset:\s*0;[\s\S]*height:\s*var\(--app-height,\s*100dvh\);[\s\S]*overflow:\s*hidden;[\s\S]*overscroll-behavior:\s*none;/
+  );
+  assert.match(css, /body\.editor-body\s*\{[\s\S]*touch-action:\s*pan-y;/);
+  assert.match(
+    css,
+    /\.editor-body \.desk\s*\{[\s\S]*position:\s*absolute;[\s\S]*inset:\s*0;[\s\S]*height:\s*100%;[\s\S]*overflow:\s*hidden;[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*padding:\s*calc\(var\(--bar-height\) \+ 10px\)/
+  );
+  assert.doesNotMatch(css, /\.editor-body \.desk\s*\{[\s\S]*min-height:\s*100dvh;/);
+  assert.doesNotMatch(css, /--mobile-editor-bottom-gap/);
+  assert.doesNotMatch(css, /--keyboard-offset/);
+  assert.match(
+    css,
+    /\.editor-body \.sheet\s*\{[\s\S]*flex:\s*1 1 0;[\s\S]*min-height:\s*0;[\s\S]*overflow:\s*hidden;/
+  );
+  assert.match(
+    css,
+    /\.editor-body \.well\s*\{[\s\S]*flex:\s*1 1 0;[\s\S]*min-height:\s*0;[\s\S]*margin:\s*clamp\(24px,\s*7vw,\s*32px\)\s+clamp\(18px,\s*5vw,\s*22px\);[\s\S]*overflow:\s*hidden;/
+  );
+  assert.match(
+    css,
+    /\.editor-body \.input,\s*\.editor-body \.mirror\s*\{[\s\S]*padding:\s*0;[\s\S]*line-height:\s*1\.72;/
+  );
+  assert.match(
+    css,
+    /\.editor-body \.input\s*\{[\s\S]*position:\s*absolute;[\s\S]*inset:\s*0;[\s\S]*width:\s*100%;[\s\S]*height:\s*100%;[\s\S]*overflow-y:\s*auto;[\s\S]*-webkit-overflow-scrolling:\s*touch;/
+  );
+  assert.match(css, /\.editor-body \.mirror\s*\{[\s\S]*position:\s*absolute;[\s\S]*inset:\s*0;/);
+  assert.match(css, /\.editor-body \.completion-bar\s*\{[\s\S]*position:\s*static;/);
+  assert.match(css, /\.editor-body \.hint\s*\{[\s\S]*position:\s*static;/);
+  assert.match(css, /\.editor-body \.toast\s*\{[\s\S]*position:\s*absolute;[\s\S]*bottom:\s*12px;/);
+});
+
+test('mobile stage changes preserve desktop A4 and scrolling pages', async () => {
+  const css = await readFile(new URL('../public/style.css', import.meta.url), 'utf8');
+
   assert.match(css, /min-height:\s*1123px;\s*\/\* A4 at 96dpi \*\//);
-  assert.doesNotMatch(
-    css,
-    /\.input,\s*\.mirror\s*\{[\s\S]*padding:\s*clamp\(26px,\s*7vw,\s*44px\)\s+clamp\(16px,\s*6vw,\s*30px\);/
-  );
-  assert.match(
-    css,
-    /--mobile-editor-bottom-gap:\s*calc\(48px \+ var\(--safe-bottom\) \+ var\(--keyboard-offset\)\);/
-  );
-  assert.match(
-    css,
-    /\.editor-body\.completion-visible\s*\{[\s\S]*--mobile-editor-bottom-gap:\s*calc\(132px \+ var\(--safe-bottom\) \+ var\(--keyboard-offset\)\);/
-  );
-  assert.match(
-    css,
-    /\.desk\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column;/
-  );
-  assert.match(
-    css,
-    /\.sheet\s*\{[\s\S]*flex:\s*1 1 0;[\s\S]*min-height:\s*0;[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column;/
-  );
-  assert.doesNotMatch(
-    css,
-    /\.sheet\s*\{[\s\S]*--paper-pad-block:[\s\S]*padding:\s*var\(--paper-pad-block\) var\(--paper-pad-inline\);/
-  );
-  assert.match(
-    css,
-    /\.well\s*\{[\s\S]*flex:\s*1 1 0;[\s\S]*min-height:\s*0;[\s\S]*margin:\s*clamp\(28px,\s*8vw,\s*36px\)\s+clamp\(20px,\s*6vw,\s*24px\);/
-  );
-  assert.match(
-    css,
-    /\.input,\s*\.mirror\s*\{[\s\S]*padding:\s*0;[\s\S]*line-height:\s*1\.72;/
-  );
-  assert.match(
-    css,
-    /\.mirror\s*\{[\s\S]*inset:\s*0;/
-  );
   assert.match(
     css,
     /\.archive,\s*\.settings,\s*\.reader\s*\{[\s\S]*calc\(44px \+ var\(--safe-bottom\)\)/
   );
-  assert.doesNotMatch(
-    css,
-    /\.desk\s*\{[\s\S]*calc\(var\(--bar-height\) \+ 12px \+ var\(--safe-top\)\)/
-  );
-  assert.doesNotMatch(
-    css,
-    /\.archive,\s*\.settings,\s*\.reader\s*\{[\s\S]*calc\(var\(--bar-height\) \+ 12px \+ var\(--safe-top\)\)/
-  );
-  assert.doesNotMatch(
-    css,
-    /\.archive\s*\{[\s\S]*calc\(var\(--bar-height\) \+ 38px \+ var\(--safe-top\)\)/
-  );
-  assert.doesNotMatch(
-    css,
-    /\.settings\s*\{[\s\S]*calc\(var\(--bar-height\) \+ 38px \+ var\(--safe-top\)\)/
-  );
-  assert.doesNotMatch(
-    css,
-    /\.reader\s*\{[\s\S]*calc\(var\(--bar-height\) \+ 26px \+ var\(--safe-top\)\)/
-  );
 });
 
-test('resize keeps mobile paper CSS-owned unless content overflows well', async () => {
+test('visual viewport drives app height and mobile resize stays CSS-owned', async () => {
   const appJs = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 
   assert.match(
     appJs,
-    /const well = input\.parentElement;/
+    /const viewportHeight = hasVisualViewport && window\.visualViewport[\s\S]*Math\.round\(window\.visualViewport\.height\)[\s\S]*Math\.round\(window\.innerHeight\);/
   );
   assert.match(
     appJs,
-    /if \(mobileLayout\?\.matches\) \{[\s\S]*const paperFloor = well \? Math\.max\(Math\.floor\(well\.clientHeight\), 1\) : 1;/
+    /root\.style\.setProperty\('--app-height', `\$\{Math\.max\(viewportHeight, 1\)\}px`\);/
   );
   assert.match(
     appJs,
-    /if \(contentHeight > paperFloor\) \{[\s\S]*input\.style\.height = `\$\{contentHeight\}px`;/ 
-  );
-  assert.match(
-    appJs,
-    /else if \(input\.style\.height\) \{[\s\S]*input\.style\.height = '';\s*\}/
-  );
-  assert.match(
-    appJs,
-    /input\.style\.height = 'auto';[\s\S]*const nextHeight = Math\.max\(input\.scrollHeight, mirrorHeight, 1\);/
+    /if \(mobileLayout\?\.matches\) \{[\s\S]*syncViewportMetrics\(\);[\s\S]*return;\s*\}/
   );
   assert.doesNotMatch(
     appJs,
-    /sheetPaddingTop|sheetPaddingBottom/
+    /if \(mobileLayout\?\.matches\) \{[\s\S]*input\.style\.height = `\$\{contentHeight\}px`;/ 
+  );
+  assert.doesNotMatch(appJs, /paperFloor|contentHeight > paperFloor/);
+  assert.match(appJs, /input\.style\.height = 'auto';[\s\S]*const nextHeight = Math\.max\(input\.scrollHeight, mirrorHeight, 1\);/);
+});
+
+test('keepInputVisible scrolls textarea on mobile and not window', async () => {
+  const appJs = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+
+  assert.match(
+    appJs,
+    /if \(mobileLayout\?\.matches\) \{[\s\S]*input\.scrollTop = targetBottom - input\.clientHeight;[\s\S]*return;\s*\}[\s\S]*window\.scrollBy\(0, rect\.top - top\);/
   );
 });
 
