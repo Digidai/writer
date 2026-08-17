@@ -1,6 +1,6 @@
 {
   "name": "writer",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "private": true,
   "description": "A quiet, input-focused writing surface. You write; an agent files everything away.",
   "type": "module",

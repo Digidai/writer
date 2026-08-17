@@ -10,7 +10,7 @@
 <link rel="preload" href="/fonts/files/noto-sans-sc-119-400-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/files/noto-sans-sc-118-400-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/fonts/noto-sans-sc.css">
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/style.css?v=0.9.4">
 <script>try{var s=JSON.parse(localStorage.getItem('writer.settings')||'{}');
 if(s.theme==='light'||s.theme==='dark')document.documentElement.dataset.theme=s.theme;
 if(s.fontSize)document.documentElement.dataset.size=s.fontSize;
@@ -30,8 +30,10 @@ document.documentElement.lang=l==='en'?'en':'zh-CN';}catch(e){}</script>
 
 <main class="desk">
   <div class="sheet">
-    <div class="mirror" aria-hidden="true"><span id="mirror-text"></span><span class="ghost" id="ghost"></span></div>
-    <textarea class="input" id="input" data-i18n-placeholder="editor.placeholder" placeholder="Start writing…" spellcheck="false" autocomplete="off" autofocus></textarea>
+    <div class="well">
+      <div class="mirror" aria-hidden="true"><span id="mirror-text"></span><span class="ghost" id="ghost"></span></div>
+      <textarea class="input" id="input" data-i18n-placeholder="editor.placeholder" placeholder="Start writing…" spellcheck="false" autocomplete="off" autofocus></textarea>
+    </div>
   </div>
 </main>
 
@@ -42,6 +44,6 @@ document.documentElement.lang=l==='en'?'en':'zh-CN';}catch(e){}</script>
 <div class="hint" id="hint" data-i18n="editor.hint">Tab accepts · ⌘⏎ archives · idle pieces file themselves</div>
 <div class="toast" id="toast" hidden></div>
 
-<script type="module" src="/app.js"></script>
+<script type="module" src="/app.js?v=0.9.4"></script>
 </body>
 </html>
