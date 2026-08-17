@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.10.1] - 2026-08-17
+
+收紧移动端书写舞台：仅锁定 `html.editor-stage`，用 `top: var(--app-offset-top)` + `height: var(--app-height)` 对齐 visualViewport（不再 `inset: 0`），并同步写入 `offsetTop`；舞台/桌面/纸面禁止平移，仅 `.input` 可纵向滚动；首屏内联脚本在 CSS 绘制前设置视口变量；提示条叠在纸面底部，不再占用纸高；`.well` 边距略增。静态资源版本参数升级到 `?v=0.10.1`。
+
 ## [0.10.0] - 2026-08-17
 
 重建移动端编辑器为「锁定书写舞台」模型：在 `max-width: 640px` 下，`html.editor-stage` 与 `body.editor-body` 固定到 `--app-height`（来自 `visualViewport.height`），彻底锁住页面滚动与橡皮筋回弹；`.desk/.sheet/.well` 改为舞台内纵向布局，唯一滚动容器为 `.input`，移除 `--keyboard-offset` 与 `--mobile-editor-bottom-gap` 文档增高方案，并让补全条/提示条/吐司都定位在舞台内部。同步调整 `resize()`（移动端不再写入 textarea 内联高度）与 `keepInputVisible()`（移动端仅滚动 textarea，不再 `window.scrollBy`），并将静态资源版本参数升级到 `?v=0.10.0`。

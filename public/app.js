@@ -153,7 +153,11 @@ function syncViewportMetrics() {
   const viewportHeight = hasVisualViewport && window.visualViewport
     ? Math.round(window.visualViewport.height)
     : Math.round(window.innerHeight);
+  const viewportOffsetTop = hasVisualViewport && window.visualViewport
+    ? Math.round(window.visualViewport.offsetTop)
+    : 0;
   root.style.setProperty('--app-height', `${Math.max(viewportHeight, 1)}px`);
+  root.style.setProperty('--app-offset-top', `${viewportOffsetTop}px`);
 }
 
 function keepInputVisible() {
@@ -566,6 +570,12 @@ noHover?.addEventListener('change', () => {
 window.visualViewport?.addEventListener('resize', scheduleViewportSync);
 window.visualViewport?.addEventListener('scroll', scheduleViewportSync);
 window.addEventListener('resize', scheduleViewportSync);
+document.addEventListener('touchmove', (event) => {
+  if (!mobileLayout?.matches) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest('textarea, button, a')) return;
+  event.preventDefault();
+}, { passive: false });
 input.addEventListener('focus', () => {
   syncViewportMetrics();
   setTimeout(scheduleViewportSync, 80);
