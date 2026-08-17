@@ -2,6 +2,7 @@
 // translated on the server so they arrive in the right language.
 import { renderMarkdown, escapeHtml } from './markdown.js';
 import { makeT, locale } from '../public/i18n.js';
+import { WRITER_VERSION } from './version.js';
 
 // Applied before first paint so a chosen theme and text size never flash.
 const BOOT = `<script>try{var s=JSON.parse(localStorage.getItem('writer.settings')||'{}');
@@ -18,7 +19,7 @@ ${refresh ? `<meta http-equiv="refresh" content="${refresh}">` : ''}
 <title>${escapeHtml(title)} · Writer</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/fonts/noto-sans-sc.css">
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/style.css?v=${WRITER_VERSION}">
 ${BOOT}
 </head>
 <body class="reader-body">
@@ -30,7 +31,7 @@ ${BOOT}
 </header>
 ${body}
 <div class="toast" id="toast" hidden></div>
-<script type="module" src="/menu.js"></script>
+<script type="module" src="/menu.js?v=${WRITER_VERSION}"></script>
 ${script}
 </body>
 </html>`;
@@ -61,7 +62,7 @@ export function renderDocumentPage(doc, lang = 'zh') {
     lang,
     t,
     title: doc.title || t('common.untitled'),
-    script: `<script type="module" src="/doc.js" data-doc="${escapeHtml(doc.id)}"></script>`,
+    script: `<script type="module" src="/doc.js?v=${WRITER_VERSION}" data-doc="${escapeHtml(doc.id)}"></script>`,
     body: `<main class="reader">
   <article class="doc">
     <header class="doc-head">
