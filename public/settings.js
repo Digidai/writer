@@ -86,13 +86,16 @@ function optionLabel(value) {
 function render() {
   fieldsEl.replaceChildren();
   let group = null;
+  let groupEl = null;
 
   for (const field of FIELDS) {
     if (field.group !== group) {
       group = field.group;
+      groupEl = el('section', 'setting-group');
       const head = el('h2', 'cat-head');
       head.append(text(t(group)), el('span', 'rule'));
-      fieldsEl.append(head);
+      groupEl.append(head);
+      fieldsEl.append(groupEl);
     }
 
     const row = el('div', 'setting');
@@ -114,7 +117,7 @@ function render() {
     }
 
     row.append(label, choices);
-    fieldsEl.append(row);
+    groupEl.append(row);
   }
 }
 

@@ -111,11 +111,11 @@ test('mobile editor CSS uses one body-locked stage', async () => {
   );
   assert.match(
     css,
-    /\.editor-body \.well\s*\{[\s\S]*flex:\s*1 1 0;[\s\S]*min-height:\s*0;[\s\S]*margin:\s*clamp\(28px,\s*8vw,\s*36px\)\s+clamp\(20px,\s*6vw,\s*24px\);[\s\S]*overflow:\s*hidden;/
+    /\.editor-body \.well\s*\{[\s\S]*flex:\s*1 1 0;[\s\S]*min-height:\s*0;[\s\S]*margin:\s*24px\s+max\(16px,\s*calc\(\(100% - 30em\) \/ 2\)\);[\s\S]*overflow:\s*hidden;/
   );
   assert.match(
     css,
-    /\.editor-body \.input,\s*\.editor-body \.mirror\s*\{[\s\S]*padding:\s*0;[\s\S]*line-height:\s*1\.72;/
+    /\.editor-body \.input,\s*\.editor-body \.mirror\s*\{[\s\S]*padding:\s*0;[\s\S]*line-height:\s*1\.80;/
   );
   assert.match(
     css,
