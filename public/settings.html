@@ -6,7 +6,7 @@
 <title>Settings · Writer</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/fonts/noto-sans-sc.css">
-<link rel="stylesheet" href="/style.css?v=0.11.1">
+<link rel="stylesheet" href="/style.css?v=0.12.0">
 <script>try{var s=JSON.parse(localStorage.getItem('writer.settings')||'{}');
 if(s.theme==='light'||s.theme==='dark')document.documentElement.dataset.theme=s.theme;
 if(s.fontSize)document.documentElement.dataset.size=s.fontSize;
@@ -29,22 +29,24 @@ document.documentElement.lang=l==='en'?'en':'zh-CN';}catch(e){}</script>
 </header>
 
 <main class="settings">
-  <h1 class="page-title" data-i18n="settings.title">Settings</h1>
-  <p class="page-sub" data-i18n="settings.sub">These preferences live on your Writer instance, so they follow you to any device.</p>
+  <div class="settings-sheet">
+    <h1 class="page-title" data-i18n="settings.title">Settings</h1>
+    <p class="page-sub" data-i18n="settings.sub">These preferences live on your Writer instance, so they follow you to any device.</p>
 
-  <div id="fields"></div>
+    <div id="fields"></div>
 
-  <section class="trash">
-    <h2 class="cat-head"><span data-i18n="settings.trash">Trash</span><span class="rule"></span><span class="count" id="trash-count">0</span></h2>
-    <p class="trash-note" data-i18n="settings.trashNote">Deleted pieces wait here and can be restored at any time. Deleting for good also removes the archived Markdown file and cannot be undone.</p>
-    <div id="trash-list"></div>
-    <p class="empty" id="trash-empty" data-i18n="settings.trashEmpty">The trash is empty.</p>
-  </section>
+    <section class="trash">
+      <h2 class="cat-head"><span data-i18n="settings.trash">Trash</span><span class="rule"></span><span class="count" id="trash-count">0</span></h2>
+      <p class="trash-note" data-i18n="settings.trashNote">Deleted pieces wait here and can be restored at any time. Deleting for good also removes the archived Markdown file and cannot be undone.</p>
+      <div id="trash-list"></div>
+      <p class="empty" id="trash-empty" data-i18n="settings.trashEmpty">The trash is empty.</p>
+    </section>
+  </div>
 
   <p class="empty" id="locked" data-i18n-html="common.locked" hidden>This Writer is locked. Please <a href="/unlock">unlock</a> it first.</p>
 </main>
 
 <div class="toast" id="toast" hidden></div>
-<script type="module" src="/settings.js?v=0.11.1"></script>
+<script type="module" src="/settings.js?v=0.12.0"></script>
 </body>
 </html>
