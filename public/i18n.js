@@ -104,7 +104,6 @@ export const MESSAGES = {
     'settings.toastErased': '已彻底删除',
     'settings.toastActionFailed': '操作失败，稍后再试',
     'settings.toastSaveFailed': '保存失败，已还原',
-    'settings.toastReadOnlyDemo': '公开演示站的设置为只读',
     'settings.toastCached': '暂时无法连接，显示的是本地缓存',
 
     'opt.auto': '自动',
@@ -223,7 +222,6 @@ export const MESSAGES = {
     'settings.toastErased': 'Deleted for good',
     'settings.toastActionFailed': 'That did not work, try again in a moment',
     'settings.toastSaveFailed': 'Could not save, reverted',
-    'settings.toastReadOnlyDemo': 'Settings are read-only on the public demo.',
     'settings.toastCached': 'Cannot reach the server, showing the local cache',
 
     'opt.auto': 'Auto',

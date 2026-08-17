@@ -12,7 +12,7 @@
 [**在线体验 writer.genedai.md**](https://writer.genedai.md) · [架构](#架构) · [部署](#快速开始) · [English](#english)
 
 > [!WARNING]
-> **writer.genedai.md 是公开演示站（PUBLIC DEMO）**：访客可写入（开放写作），但写入与 AI 补全受速率限制；`/settings` 为站点级设置，在未配置 `WRITER_ACCESS_KEY` 时对访客只读；整库 zip 导出与 MCP 端点关闭。请不要在演示站写入私密内容。
+> **writer.genedai.md 是公开演示站（PUBLIC DEMO）**：访客可写入文档与站点设置（开放写作），但写入与 AI 补全受速率限制；整库 zip 导出与 MCP 端点关闭。请不要在演示站写入私密内容。
 
 <img src="docs/screenshot-editor-light.png#gh-light-mode-only" alt="Writer 编辑器：A4 画布与灰色的 AI 续写建议" width="100%">
 <img src="docs/screenshot-editor-dark.png#gh-dark-mode-only" alt="Writer 编辑器：A4 画布与灰色的 AI 续写建议" width="100%">
@@ -148,7 +148,7 @@ Kimi K2.6 属于 Workers AI 的前沿模型，需要 Workers Paid（$5/月）或
 
 ### 访问密钥
 
-`WRITER_ACCESS_KEY` 不设置时，实例是**公开演示模式**（writer.genedai.md 当前就是这样）：任何访客都可写入文档，`/api/settings` 对访客只读，写入与补全有速率限制。请不要在该模式写私密内容。
+`WRITER_ACCESS_KEY` 不设置时，实例是**公开演示模式**（writer.genedai.md 当前就是这样）：任何访客都可写入文档与站点设置，写入与补全有速率限制。请不要在该模式写私密内容。
 
 如果你要改为私有模式（单一共享密钥）：
 
@@ -156,7 +156,7 @@ Kimi K2.6 属于 Workers AI 的前沿模型，需要 Workers Paid（$5/月）或
 npx wrangler secret put WRITER_ACCESS_KEY
 ```
 
-之后访问 `/unlock` 输入密钥即可（Cookie 有效期 180 天）。解锁密钥只接受表单提交，不进入 URL。设置该 secret 后：实例进入私有模式、设置可写、并使用更宽松的速率限制。
+之后访问 `/unlock` 输入密钥即可（Cookie 有效期 180 天）。解锁密钥只接受表单提交，不进入 URL。设置该 secret 后：实例进入私有模式，并使用更宽松的速率限制。
 
 ### 语义检索（私有模式）
 
