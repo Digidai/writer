@@ -64,11 +64,11 @@ test('segments stay one capsule with raised paper, not ink invert', () => {
   assert.match(css, /\.segmented\s*\{[\s\S]*border:\s*1px solid var\(--hairline\);[\s\S]*border-radius:\s*999px;[\s\S]*background:\s*color-mix\(in srgb,\s*var\(--desk\) 55%,\s*var\(--paper\)\);/);
   assert.match(css, /\.segment\s*\{[\s\S]*color:\s*var\(--ink-soft\);[\s\S]*background:\s*transparent;/);
   assert.match(css, /\.segment\[aria-pressed="true"\]\s*\{[\s\S]*color:\s*var\(--ink\);[\s\S]*background:\s*var\(--paper\);/);
-  assert.doesNotMatch(css, /\.segment\[aria-pressed="true"\]\s*\{[\s\S]*background:\s*var\(--ink\)/);
-  assert.doesNotMatch(css, /\.search-mode-button\[aria-pressed="true"\]\s*\{[\s\S]*background:\s*var\(--ink\)/);
+  assert.doesNotMatch(css, /\.segment\[aria-pressed="true"\]\s*\{[^}]*background:\s*var\(--ink\)/);
+  assert.doesNotMatch(css, /\.search-mode-button\[aria-pressed="true"\]\s*\{[^}]*background:\s*var\(--ink\)/);
   assert.match(css, /\.search-mode-button\[aria-pressed="true"\]\s*\{[\s\S]*color:\s*var\(--ink\);[\s\S]*background:\s*var\(--paper\);/);
   assert.doesNotMatch(css, /\.segmented\s*\{[\s\S]*border:\s*0;[\s\S]*border-radius:\s*0;/);
-  assert.doesNotMatch(css, /\.setting-desc\s*\{[\s\S]*white-space:\s*nowrap/);
+  assert.doesNotMatch(css, /\.setting-desc\s*\{[^}]*white-space:\s*nowrap/);
   for (const lang of ['zh', 'en']) {
     for (const key of Object.keys(MESSAGES[lang]).filter((name) => name.endsWith('Desc'))) {
       assert.equal(MESSAGES[lang][key].includes('\n'), false, `${lang}.${key} wraps`);
