@@ -8,8 +8,8 @@ const css = await readFile(new URL('../public/style.css', import.meta.url), 'utf
 const settingsHtml = await readFile(new URL('../public/settings.html', import.meta.url), 'utf8');
 const htmlJs = await readFile(new URL('../src/html.js', import.meta.url), 'utf8');
 
-test('version is 0.12.1', () => {
-  assert.equal(WRITER_VERSION, '0.12.1');
+test('version is 0.12.2', () => {
+  assert.equal(WRITER_VERSION, '0.12.2');
 });
 
 test('one quiet paper: color, hairline, 3px radius, short sit-on-desk shadow', () => {
@@ -67,6 +67,10 @@ test('segments stay one capsule with raised paper, not ink invert', () => {
   assert.doesNotMatch(css, /\.segment\[aria-pressed="true"\]\s*\{[^}]*background:\s*var\(--ink\)/);
   assert.doesNotMatch(css, /\.search-mode-button\[aria-pressed="true"\]\s*\{[^}]*background:\s*var\(--ink\)/);
   assert.match(css, /\.search-mode-button\[aria-pressed="true"\]\s*\{[\s\S]*color:\s*var\(--ink\);[\s\S]*background:\s*var\(--paper\);/);
+  assert.match(
+    css,
+    /\.segmented\s*\{[\s\S]*width:\s*100%;[\s\S]*justify-content:\s*flex-start;[\s\S]*\}\s*\.segment\s*\{[\s\S]*flex:\s*1;[\s\S]*min-width:\s*0;/
+  );
   assert.doesNotMatch(css, /\.segmented\s*\{[\s\S]*border:\s*0;[\s\S]*border-radius:\s*0;/);
   assert.doesNotMatch(css, /\.setting-desc\s*\{[^}]*white-space:\s*nowrap/);
   for (const lang of ['zh', 'en']) {
