@@ -8,8 +8,8 @@ const css = await readFile(new URL('../public/style.css', import.meta.url), 'utf
 const settingsHtml = await readFile(new URL('../public/settings.html', import.meta.url), 'utf8');
 const htmlJs = await readFile(new URL('../src/html.js', import.meta.url), 'utf8');
 
-test('version is 0.12.0', () => {
-  assert.equal(WRITER_VERSION, '0.12.0');
+test('version is 0.12.1', () => {
+  assert.equal(WRITER_VERSION, '0.12.1');
 });
 
 test('one quiet paper: color, hairline, 3px radius, short sit-on-desk shadow', () => {
@@ -60,9 +60,15 @@ test('archive rows are dense and search stays a small radius', () => {
   assert.match(css, /\.card\s*\{[\s\S]*padding:\s*12px 16px;[\s\S]*margin-bottom:\s*8px;/);
 });
 
-test('segments stay one capsule and setting copy is one line', () => {
-  assert.match(css, /\.segmented\s*\{[\s\S]*border-radius:\s*999px;/);
+test('segments stay one capsule with raised paper, not ink invert', () => {
+  assert.match(css, /\.segmented\s*\{[\s\S]*border:\s*1px solid var\(--hairline\);[\s\S]*border-radius:\s*999px;[\s\S]*background:\s*color-mix\(in srgb,\s*var\(--desk\) 55%,\s*var\(--paper\)\);/);
+  assert.match(css, /\.segment\s*\{[\s\S]*color:\s*var\(--ink-soft\);[\s\S]*background:\s*transparent;/);
+  assert.match(css, /\.segment\[aria-pressed="true"\]\s*\{[\s\S]*color:\s*var\(--ink\);[\s\S]*background:\s*var\(--paper\);/);
+  assert.doesNotMatch(css, /\.segment\[aria-pressed="true"\]\s*\{[^}]*background:\s*var\(--ink\)/);
+  assert.doesNotMatch(css, /\.search-mode-button\[aria-pressed="true"\]\s*\{[^}]*background:\s*var\(--ink\)/);
+  assert.match(css, /\.search-mode-button\[aria-pressed="true"\]\s*\{[\s\S]*color:\s*var\(--ink\);[\s\S]*background:\s*var\(--paper\);/);
   assert.doesNotMatch(css, /\.segmented\s*\{[\s\S]*border:\s*0;[\s\S]*border-radius:\s*0;/);
+  assert.doesNotMatch(css, /\.setting-desc\s*\{[^}]*white-space:\s*nowrap/);
   for (const lang of ['zh', 'en']) {
     for (const key of Object.keys(MESSAGES[lang]).filter((name) => name.endsWith('Desc'))) {
       assert.equal(MESSAGES[lang][key].includes('\n'), false, `${lang}.${key} wraps`);

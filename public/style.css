@@ -446,24 +446,27 @@ a { color: inherit; }
 .search-mode {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--desk) 55%, var(--paper));
 }
 
 .search-mode-button {
   min-height: 38px;
   padding: 0 12px;
-  border: 1px solid var(--card-line);
-  border-radius: 999px;
-  background: var(--paper);
+  border: 0;
+  border-left: 1px solid var(--hairline);
+  background: transparent;
   color: var(--ink-soft);
   font: 400 12px/1 var(--ui);
   letter-spacing: 0.03em;
 }
+.search-mode-button:first-child { border-left: 0; }
 
 .search-mode-button[aria-pressed="true"] {
-  color: var(--paper);
-  background: var(--ink);
-  border-color: transparent;
+  color: var(--ink);
+  background: var(--paper);
 }
 
 .export-button {
@@ -822,9 +825,6 @@ a { color: inherit; }
   font-size: 12.5px;
   line-height: 1.4;
   color: var(--ink-faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .segmented {
@@ -832,10 +832,10 @@ a { color: inherit; }
   flex-shrink: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
-  border: 1px solid var(--card-line);
+  border: 1px solid var(--hairline);
   border-radius: 999px;
   overflow: hidden;
-  background: var(--paper);
+  background: color-mix(in srgb, var(--desk) 55%, var(--paper));
   max-width: 100%;
 }
 .segment {
@@ -843,7 +843,7 @@ a { color: inherit; }
   color: var(--ink-soft);
   background: transparent;
   border: 0;
-  border-left: 1px solid var(--card-line);
+  border-left: 1px solid var(--hairline);
   min-height: 44px;
   padding: 0 14px;
   cursor: pointer;
@@ -852,8 +852,8 @@ a { color: inherit; }
 .segment:first-child { border-left: 0; }
 .segment:hover { color: var(--ink); }
 .segment[aria-pressed="true"] {
-  color: var(--paper);
-  background: var(--ink);
+  color: var(--ink);
+  background: var(--paper);
 }
 
 .trash { margin-top: 20px; padding-top: 4px; }
