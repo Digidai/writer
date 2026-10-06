@@ -7,8 +7,8 @@
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/fonts/noto-sans-sc.css">
-<link rel="stylesheet" href="/style.css?v=0.13.0">
-<link rel="stylesheet" href="/admin.css?v=0.13.0">
+<link rel="stylesheet" href="/style.css?v=0.14.0">
+<link rel="stylesheet" href="/admin.css?v=0.14.0">
 <script>try{var s=JSON.parse(localStorage.getItem('writer.settings')||'{}');
 if(s.theme==='light'||s.theme==='dark')document.documentElement.dataset.theme=s.theme;
 var h=(navigator.language||'').toLowerCase();
@@ -38,15 +38,13 @@ document.documentElement.lang=l==='en'?'en':'zh-CN';}catch(e){}</script>
 
   <section class="admin-app" id="app-view" hidden>
     <nav class="admin-tabs" id="tabs" aria-label="Admin sections"></nav>
-    <div class="admin-filters" id="filters" hidden>
-      <div class="segmented admin-range" id="range" role="group"></div>
-    </div>
+    <div class="admin-filters" id="filters" hidden></div>
     <div class="admin-content" id="content"></div>
   </section>
 </main>
 
 <div class="admin-tooltip" id="tooltip" role="tooltip" hidden></div>
 <div class="toast" id="toast" hidden></div>
-<script type="module" src="/admin.js?v=0.13.0"></script>
+<script type="module" src="/admin.js?v=0.14.0"></script>
 </body>
 </html>

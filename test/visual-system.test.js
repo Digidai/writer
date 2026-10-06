@@ -8,8 +8,8 @@ const css = await readFile(new URL('../public/style.css', import.meta.url), 'utf
 const settingsHtml = await readFile(new URL('../public/settings.html', import.meta.url), 'utf8');
 const htmlJs = await readFile(new URL('../src/html.js', import.meta.url), 'utf8');
 
-test('version is 0.13.0', () => {
-  assert.equal(WRITER_VERSION, '0.13.0');
+test('version is 0.14.0', () => {
+  assert.equal(WRITER_VERSION, '0.14.0');
 });
 
 test('one quiet paper: color, hairline, 3px radius, short sit-on-desk shadow', () => {

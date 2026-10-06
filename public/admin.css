@@ -7,6 +7,11 @@
   --viz-base: #8a8478;
   --viz-accent: #b3432b;
   --viz-grid: var(--hairline);
+  /* Status (Web Vitals ratings): the reference palette's fixed steps,
+     never themed, and always paired with a shape and a label. */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-critical: #d03b3b;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) .admin-body {
@@ -70,11 +75,48 @@
 
 .admin-filters {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: 10px;
   margin: 0 0 18px;
 }
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.range-dates { display: flex; align-items: center; gap: 8px; }
+.range-sep { font-size: 12.5px; color: var(--ink-faint); }
+.date-input {
+  min-height: 38px;
+  padding: 0 10px;
+  font: 400 13px/1 var(--ui);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  color-scheme: light dark;
+}
+
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  font: 400 12.5px/1 var(--ui);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--card-line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.chip-key { color: var(--ink-faint); }
+.chip-value { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-x { color: var(--ink-faint); font-size: 14px; line-height: 1; }
+.chip:hover .chip-x, .chip:focus-visible .chip-x { color: var(--seal); }
+.chip-clear { min-height: 30px; font-size: 12.5px; }
 .admin-range { width: auto; }
 .admin-range .segment { flex: 0 0 auto; padding: 0 14px; }
 
@@ -118,6 +160,9 @@
   font-size: 12px;
   color: var(--ink-faint);
 }
+a.kpi-link { display: block; color: inherit; text-decoration: none; }
+a.kpi-link:hover { border-color: var(--card-line); }
+a.kpi-link:hover .kpi-label { color: var(--ink); }
 
 /* -------------------------------------------------- column charts */
 
@@ -266,6 +311,21 @@
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
+.rank-hint { margin: -6px 0 8px; font-size: 11.5px; color: var(--ink-faint); }
+button.rank-row {
+  width: 100%;
+  margin: 0;
+  font: inherit;
+  font-size: 13px;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+button.rank-row:hover .rank-key { color: var(--seal); }
+button.rank-row:focus-visible { outline: 1px solid var(--seal); outline-offset: 2px; }
 .rank-bar {
   grid-column: 1 / -1;
   height: 6px;
@@ -411,6 +471,63 @@
 .config-row .segmented { width: auto; }
 .config-row .segment { flex: 0 0 auto; padding: 0 14px; }
 .config-help { margin: 8px 0 0; font-size: 12.5px; line-height: 1.7; color: var(--ink-faint); }
+
+/* ------------------------------------------------- vitals, meters */
+
+.stack { display: grid; gap: 10px; }
+.rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.rating-mark { flex: none; width: 8px; height: 8px; }
+.rating.good .rating-mark { background: var(--status-good); border-radius: 50%; }
+.rating.needs .rating-mark {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 9px solid var(--status-warning);
+}
+.rating.poor .rating-mark { background: var(--status-critical); border-radius: 1px; }
+.rating.none .rating-mark { background: var(--card-line); border-radius: 50%; }
+.vital-cell { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+
+.allowance { margin-top: 10px; padding: 16px 18px; }
+.allowance-title { margin: 0; font-size: 13px; color: var(--ink); }
+.meter {
+  height: 8px;
+  margin: 10px 0 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--desk) 70%, var(--paper));
+  border-radius: 4px;
+}
+.meter-fill {
+  display: block;
+  width: var(--w);
+  height: 100%;
+  background: var(--viz-base);
+  border-radius: 4px;
+}
+
+.admin td.heat { background: color-mix(in srgb, var(--viz-base) var(--fill), var(--paper)); }
+.cohorts td.num { min-width: 52px; }
+
+.event-detail td { background: color-mix(in srgb, var(--desk) 35%, var(--paper)); }
+.event-detail pre {
+  max-height: 320px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 400 12px/1.6 ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--ink-soft);
+}
+.event-detail .detail-actions { margin-top: 10px; }
+.toolbar .search.narrow { flex: 0 1 240px; }
 
 @media (max-width: 640px) {
   .plot { margin-left: 30px; }

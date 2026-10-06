@@ -1,24 +1,208 @@
-// One page view per load, sent as a beacon so it never delays anything.
-// The server keeps no IP and no cookie for this: see src/analytics.js.
-export function track(type, extra = {}) {
+// Page analytics without cookies or storage. One view per load, then a
+// summary whenever the page is hidden: how long it was actually used,
+// how far it was scrolled, and its Web Vitals. The view id lives only in
+// this page's memory. The server keeps no IP: see src/analytics.js.
+const ENDPOINT = '/api/signal';
+// Time counts while the page is visible and was used in the last two minutes.
+const IDLE_MS = 2 * 60 * 1000;
+const TICK_MS = 5000;
+const MAX_ERRORS = 3;
+
+function send(body) {
   try {
-    const body = JSON.stringify({
-      type,
-      path: location.pathname,
-      referrer: type === 'pageview' ? document.referrer : '',
-      ...extra,
-    });
-    const blob = new Blob([body], { type: 'application/json' });
-    if (navigator.sendBeacon && navigator.sendBeacon('/api/signal', blob)) return;
-    fetch('/api/signal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-      keepalive: true,
-    }).catch(() => {});
+    const json = JSON.stringify(body);
+    const blob = new Blob([json], { type: 'application/json' });
+    if (navigator.sendBeacon && navigator.sendBeacon(ENDPOINT, blob)) return;
+    fetch(ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: json, keepalive: true })
+      .catch(() => {});
   } catch {
     /* analytics never breaks a page */
   }
 }
 
-track('pageview');
+function randomId() {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+const view = { id: randomId(), engaged: 0, lastTick: 0, lastInput: 0, scroll: 0, vitals: {} };
+
+// Product events from the page (suggestion shown, accepted, sign-in asked).
+// They carry this view's id: the server counts them only for a view it
+// recorded for the same visitor.
+export function track(type, extra = {}) {
+  send({ type, view: view.id, path: location.pathname, ...extra });
+}
+
+function campaign() {
+  const p = new URLSearchParams(location.search);
+  return {
+    source: p.get('utm_source') || p.get('ref') || undefined,
+    medium: p.get('utm_medium') || undefined,
+    campaign: p.get('utm_campaign') || undefined,
+  };
+}
+
+function startView() {
+  const now = performance.now();
+  Object.assign(view, { engaged: 0, lastTick: now, lastInput: now, scroll: 0 });
+  measureScroll();
+  send({
+    type: 'pageview',
+    view: view.id,
+    path: location.pathname,
+    referrer: document.referrer,
+    utm: campaign(),
+    lang: navigator.language,
+    width: window.innerWidth,
+  });
+}
+
+function tick() {
+  const now = performance.now();
+  if (document.visibilityState === 'visible' && now - view.lastInput <= IDLE_MS) {
+    view.engaged += Math.min(now - view.lastTick, TICK_MS * 2);
+  }
+  view.lastTick = now;
+}
+
+function measureScroll() {
+  const doc = document.documentElement;
+  const height = Math.max(doc.scrollHeight, document.body ? document.body.scrollHeight : 0);
+  const seen = height <= window.innerHeight ? 100 : ((window.scrollY + window.innerHeight) / height) * 100;
+  view.scroll = Math.max(view.scroll, Math.min(100, Math.round(seen)));
+}
+
+function report() {
+  tick();
+  send({ type: 'engage', view: view.id, path: location.pathname, ms: Math.round(view.engaged), scroll: view.scroll, vitals: view.vitals });
+}
+
+for (const name of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+  addEventListener(name, () => {
+    tick();
+    view.lastInput = performance.now();
+  }, { capture: true, passive: true });
+}
+addEventListener('scroll', () => {
+  view.lastInput = performance.now();
+  measureScroll();
+}, { passive: true });
+setInterval(tick, TICK_MS);
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') report();
+  else {
+    view.lastTick = performance.now();
+    view.lastInput = view.lastTick;
+  }
+});
+addEventListener('pagehide', report);
+// Back/forward cache: a restored page is a new view.
+addEventListener('pageshow', (e) => {
+  if (!e.persisted) return;
+  view.id = randomId();
+  view.vitals = {};
+  startView();
+});
+
+// ---------------------------------------------------------------- vitals
+// The Web Vitals definitions, measured directly: LCP is the last largest
+// paint before the first input, CLS the worst burst of layout shifts (gaps
+// under 1 s, windows under 5 s), INP close to the 98th percentile of
+// interaction latency.
+
+function observe(type, onEntries, options = {}) {
+  try {
+    if (!PerformanceObserver.supportedEntryTypes || !PerformanceObserver.supportedEntryTypes.includes(type)) return;
+    new PerformanceObserver((list) => onEntries(list.getEntries())).observe({ type, buffered: true, ...options });
+  } catch {
+    /* unsupported: that vital is simply absent */
+  }
+}
+
+const nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+const activation = (nav && nav.activationStart) || 0;
+if (nav && nav.responseStart > 0) view.vitals.ttfb = Math.max(0, Math.round(nav.responseStart - activation));
+
+observe('paint', (entries) => {
+  for (const e of entries) {
+    if (e.name === 'first-contentful-paint') view.vitals.fcp = Math.max(0, Math.round(e.startTime - activation));
+  }
+});
+
+let lcpFinal = false;
+observe('largest-contentful-paint', (entries) => {
+  if (lcpFinal) return;
+  const last = entries[entries.length - 1];
+  if (last) view.vitals.lcp = Math.max(0, Math.round(last.startTime - activation));
+});
+for (const name of ['keydown', 'pointerdown']) addEventListener(name, () => { lcpFinal = true; }, { once: true, capture: true });
+
+let clsWorst = 0;
+let clsWindow = 0;
+let clsFirst = 0;
+let clsLast = 0;
+observe('layout-shift', (entries) => {
+  for (const e of entries) {
+    if (e.hadRecentInput) continue;
+    if (clsWindow && e.startTime - clsLast < 1000 && e.startTime - clsFirst < 5000) clsWindow += e.value;
+    else {
+      clsWindow = e.value;
+      clsFirst = e.startTime;
+    }
+    clsLast = e.startTime;
+    clsWorst = Math.max(clsWorst, clsWindow);
+  }
+  view.vitals.cls = Math.round(clsWorst * 1000);
+});
+
+// INP: the slowest interaction, ignoring one in fifty. Each interaction is
+// its longest entry. Only the slowest ten can ever be reported, so the rest
+// are forgotten once there are many. Interactions under 16 ms are not
+// reported by the browser, so the first input always counts as well
+// (otherwise a fast page would have no INP at all).
+const durations = new Map();
+let interactions = 0;
+function addInteraction(id, duration) {
+  if (!durations.has(id)) interactions += 1;
+  durations.set(id, Math.max(durations.get(id) || 0, duration));
+  let worst = [...durations.values()].sort((a, b) => b - a);
+  if (durations.size > 200) {
+    const keep = [...durations.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+    durations.clear();
+    for (const [k, v] of keep) durations.set(k, v);
+    worst = keep.map(([, v]) => v);
+  }
+  view.vitals.inp = Math.round(worst[Math.min(worst.length - 1, Math.floor(interactions / 50))]);
+}
+observe('first-input', (entries) => {
+  for (const e of entries) addInteraction(e.interactionId || 'first', e.duration);
+});
+observe('event', (entries) => {
+  for (const e of entries) if (e.interactionId) addInteraction(e.interactionId, e.duration);
+}, { durationThreshold: 16 });
+
+// ---------------------------------------------------------------- errors
+// Our own scripts only (not extensions), a few per page, no stack traces.
+
+let errors = 0;
+function reportError(message, source, line, col) {
+  if (errors >= MAX_ERRORS) return;
+  if (source && !String(source).startsWith(location.origin)) return;
+  if (/ResizeObserver loop|Script error\.?$/.test(String(message))) return;
+  errors += 1;
+  send({ type: 'client_error', path: location.pathname, message: String(message).slice(0, 200), source, line, col });
+}
+addEventListener('error', (e) => {
+  if (e.target && e.target !== window) return; // resource load errors
+  reportError(e.message, e.filename, e.lineno, e.colno);
+});
+addEventListener('unhandledrejection', (e) => {
+  const reason = e.reason;
+  if (reason && reason.name === 'AbortError') return;
+  reportError(reason && reason.message ? reason.message : String(reason), reason && reason.fileName, null, null);
+});
+
+startView();

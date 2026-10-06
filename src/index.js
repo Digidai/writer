@@ -19,7 +19,8 @@ import { searchDocumentsData } from './search-endpoint.js';
 import { reopenDocument, restoreDocument } from './archive-actions.js';
 import { handleReindexRequest } from './reindex.js';
 import { getViewer, ensureAnonId, ownerScope, authRequired, handleAuthApi } from './auth.js';
-import { handleSignal, track } from './analytics.js';
+import { handleSignal, track, recordWriting, normalizePath, isBot } from './analytics.js';
+import { errorText } from './ai-usage.js';
 import { handleAdmin } from './admin.js';
 import { json, readJson, withCookies } from './http.js';
 import { bumpCounter, hourBucket } from './site-config.js';
@@ -43,7 +44,7 @@ export default {
     const { pathname } = url;
 
     if (/^\/mcp\/?$/.test(pathname)) {
-      return handleMcpRequest(request, env);
+      return handleMcpRequest(request, env, ctx);
     }
 
     // The admin console has its own password and sits outside the
@@ -55,7 +56,7 @@ export default {
 
     if (pathname === '/unlock') {
       return handleUnlock(request, env, url, {
-        consumeUnlockAttempt: (req) => enforceRateLimit(req, {
+        consumeUnlockAttempt: (req) => throttle(req, env, ctx, {
           bucket: 'unlock',
           limit: 10,
           windowMs: FIFTEEN_MINUTES_MS,
@@ -76,10 +77,16 @@ export default {
     let response;
     try {
       if (pathname.startsWith('/api/')) response = await handleApi(request, env, ctx, url, viewer);
-      else if (pathname.startsWith('/d/')) response = await handleReader(request, env, url, viewer);
-      else response = await env.ASSETS.fetch(request);
+      else if (pathname.startsWith('/d/')) response = await handleReader(request, env, ctx, url, viewer);
+      else {
+        response = await env.ASSETS.fetch(request);
+        if (response.status === 404 && request.method === 'GET') noteNotFound(env, ctx, request, pathname);
+      }
     } catch (err) {
       console.error('unhandled error', err);
+      track(env, ctx, {
+        type: 'server_error', request, path: normalizePath(pathname), meta: { method: request.method, message: errorText(err) },
+      });
       response = json({ error: 'internal error' }, 500);
     }
     return withCookies(response, viewer.cookies);
@@ -118,20 +125,20 @@ async function handleApi(request, env, ctx, url, viewer) {
   if (path === '/api/signal' && method === 'POST') return handleSignal(request, env, ctx, viewer);
 
   if (path === '/api/documents' && method === 'POST') {
-    const limited = await limitDocumentCreates(request, env, viewer);
+    const limited = await limitDocumentCreates(request, env, ctx, viewer);
     if (limited) return limited;
     return createDocument(request, env, ctx, viewer);
   }
   if (path === '/api/documents' && method === 'GET') return listDocuments(env, url, viewer);
-  if (path === '/api/search' && method === 'GET') return searchDocuments(env, url, viewer);
+  if (path === '/api/search' && method === 'GET') return searchDocuments(request, env, ctx, url, viewer);
   if (path === '/api/export' && (method === 'GET' || method === 'HEAD')) {
     const res = await handleExportRequest(request, env, viewer);
-    if (method === 'GET' && res.status === 200) track(env, ctx, { type: 'export', userId: viewer.user.id });
+    if (method === 'GET' && res.status === 200) track(env, ctx, { type: 'export', request, userId: viewer.user.id });
     return res;
   }
   if (path === '/api/reindex' && method === 'POST') return handleReindexRequest(env);
   if (path === '/api/complete' && method === 'POST') {
-    const limited = await enforceRateLimit(request, {
+    const limited = await throttle(request, env, ctx, {
       bucket: 'complete',
       limit: env.WRITER_ACCESS_KEY || viewer.user ? 60 : 20,
       windowMs: HOUR_MS,
@@ -140,14 +147,24 @@ async function handleApi(request, env, ctx, url, viewer) {
     return handleComplete(request, env, ctx, viewer);
   }
   if (path === '/api/settings' && method === 'GET') return getSettings(env, viewer);
-  if (path === '/api/settings' && method === 'PUT') return updateSettings(request, env, viewer);
+  if (path === '/api/settings' && method === 'PUT') {
+    return updateSettings(request, env, viewer, {
+      onSaved: (keys) => {
+        if (keys.length) track(env, ctx, { type: 'settings_change', request, userId: viewer.user.id, meta: { keys } });
+      },
+    });
+  }
 
   const m = path.match(/^\/api\/documents\/([0-9a-fA-F-]{36})(?:\/(finalize|file|reopen|restore))?$/);
   if (m) {
     const [, id, sub] = m;
     if (method === 'GET') {
       if (!sub) return getDocument(env, id, viewer);
-      if (sub === 'file') return downloadFile(env, id, viewer);
+      if (sub === 'file') {
+        const res = await downloadFile(env, id, viewer);
+        if (res.status === 200) track(env, ctx, { type: 'download', request, userId: viewer.user.id, docId: id });
+        return res;
+      }
       return json({ error: 'not found' }, 404);
     }
     // Only real writes spend the write budget: a cross-site HEAD flood
@@ -155,22 +172,29 @@ async function handleApi(request, env, ctx, url, viewer) {
     const isWrite = sub ? method === 'POST' && sub !== 'file' : method === 'PUT' || method === 'DELETE';
     if (!isWrite) return json({ error: 'method not allowed' }, 405);
 
-    const limited = await limitDocumentWrites(request, env);
+    const limited = await limitDocumentWrites(request, env, ctx);
     if (limited) return limited;
     if (!sub && method === 'PUT') {
-      return updateDocument(request, env, id, { maxContent: MAX_CONTENT, anonMaxContent: ANON_MAX_CONTENT, viewer });
+      return updateDocument(request, env, id, {
+        maxContent: MAX_CONTENT,
+        anonMaxContent: ANON_MAX_CONTENT,
+        viewer,
+        onSaved: ({ chars }) => noteWriting(env, ctx, request, viewer, id, chars),
+      });
     }
-    if (!sub && method === 'DELETE') return deleteDocument(env, ctx, id, url, viewer);
-    if (sub === 'finalize' && method === 'POST') return finalizeDocument(env, ctx, id, viewer);
+    if (!sub && method === 'DELETE') return deleteDocument(request, env, ctx, id, url, viewer);
+    if (sub === 'finalize' && method === 'POST') return finalizeDocument(request, env, ctx, id, viewer);
     if (sub === 'reopen' && method === 'POST') {
       if (!viewer.user) return authRequired();
       const res = await reopenDocument(env, id, viewer);
-      if (res.ok) track(env, ctx, { type: 'reopen', userId: viewer.user.id });
+      if (res.ok) track(env, ctx, { type: 'reopen', request, userId: viewer.user.id, docId: id });
       return res;
     }
     if (sub === 'restore' && method === 'POST') {
       if (!viewer.user) return authRequired();
-      return restoreDocument(env, id, viewer);
+      const res = await restoreDocument(env, id, viewer, ctx);
+      if (res.ok) track(env, ctx, { type: 'restore', request, userId: viewer.user.id, docId: id });
+      return res;
     }
   }
 
@@ -201,7 +225,8 @@ async function createDocument(request, env, ctx, viewer) {
     .bind(id, deriveTitle(content), content, now, now, userId, anonId)
     .run();
 
-  track(env, ctx, { type: 'doc_create', userId, meta: { anonymous: !userId } });
+  track(env, ctx, { type: 'doc_create', request, userId, docId: id, meta: { anonymous: !userId } });
+  if (content) noteWriting(env, ctx, request, viewer, id, content.length);
   return json({ id, status: 'draft', created_at: now, updated_at: now }, 201);
 }
 
@@ -239,7 +264,7 @@ async function listDocuments(env, url, viewer) {
 
 // Deleting is reversible by default: the row moves to the trash and the
 // R2 file stays put. `?permanent=1` erases a trashed document for good.
-async function deleteDocument(env, ctx, id, url, viewer) {
+async function deleteDocument(request, env, ctx, id, url, viewer) {
   const scope = ownerScope(viewer);
   const permanent = url.searchParams.get('permanent') === '1';
   const row = await env.DB.prepare(`SELECT id, status, archived_at FROM documents WHERE id = ? AND ${scope.sql}`)
@@ -256,7 +281,7 @@ async function deleteDocument(env, ctx, id, url, viewer) {
     )
       .bind(now, now, id, ...scope.binds)
       .run();
-    track(env, ctx, { type: 'trash', userId });
+    track(env, ctx, { type: 'trash', request, userId, docId: id });
     return json({ id, status: 'deleted', deleted_at: now });
   }
 
@@ -274,18 +299,34 @@ async function deleteDocument(env, ctx, id, url, viewer) {
     .bind(id, ...scope.binds)
     .run();
   await deleteDocumentVector(env, id);
-  track(env, ctx, { type: 'erase', userId });
+  track(env, ctx, { type: 'erase', request, userId, docId: id });
   return json({ id, status: 'erased' });
 }
 
-async function searchDocuments(env, url, viewer) {
+// What was searched is never stored: only how (mode), how long it was,
+// how many results came back and how fast.
+async function searchDocuments(request, env, ctx, url, viewer) {
   if (!viewer.user) return authRequired();
-  return json(await searchDocumentsData(env, url, { mapDoc: (row) => publicDoc(row), limit: 50, viewer }));
+  const started = Date.now();
+  const data = await searchDocumentsData(env, url, { mapDoc: (row) => publicDoc(row), limit: 50, viewer, ctx });
+  if (data.query) {
+    track(env, ctx, {
+      type: 'search',
+      request,
+      userId: viewer.user.id,
+      value: data.documents.length,
+      meta: { mode: data.mode, fallback: data.fallback, chars: data.query.length, ms: Date.now() - started },
+    });
+  }
+  return json(data);
 }
 
 // Filing a piece needs an account. Anonymous writers get 401 and the
 // editor asks for an email; signing in claims the draft, then this runs again.
-async function finalizeDocument(env, ctx, id, viewer) {
+async function finalizeDocument(request, env, ctx, id, viewer) {
+  const body = await readJson(request);
+  // The editor's own idle timer files drafts too; it says so.
+  const auto = Boolean(body && body.auto === true);
   const scope = ownerScope(viewer);
   const row = await env.DB.prepare(
     `SELECT id, status, content, updated_at FROM documents WHERE id = ? AND ${scope.sql}`
@@ -293,7 +334,11 @@ async function finalizeDocument(env, ctx, id, viewer) {
     .bind(id, ...scope.binds)
     .first();
   if (!row) return json({ error: 'not found' }, 404);
-  if (!viewer.user) return authRequired();
+  if (!viewer.user) {
+    // The sign-in wall: the funnel's most important step.
+    track(env, ctx, { type: 'finalize_blocked', request, docId: id, value: String(row.content || '').length });
+    return authRequired();
+  }
   if (row.status === 'deleted') return json({ id, status: 'deleted' }, 409);
   if (row.status === 'archived') return json({ id, status: 'archived' });
 
@@ -301,7 +346,7 @@ async function finalizeDocument(env, ctx, id, viewer) {
     // A workflow should have this in hand; if the row is stale, it died — relaunch.
     if (Date.parse(row.updated_at) < Date.now() - STALE_PROCESSING_MS) {
       try {
-        await launchPipeline(env, id, { reclaim: true });
+        await launchPipeline(env, id, { reclaim: true, trigger: 'reclaim' });
       } catch (err) {
         console.error(`finalize: relaunch failed for ${id}`, err);
       }
@@ -320,7 +365,7 @@ async function finalizeDocument(env, ctx, id, viewer) {
     if (del.meta.changes > 0) return json({ id, status: 'discarded' });
   }
 
-  const launched = await launchPipeline(env, id);
+  const launched = await launchPipeline(env, id, { trigger: auto ? 'idle' : 'manual' });
   if (!launched) {
     const cur = await env.DB.prepare('SELECT status FROM documents WHERE id = ? AND user_id = ?')
       .bind(id, viewer.user.id)
@@ -328,7 +373,9 @@ async function finalizeDocument(env, ctx, id, viewer) {
     if (!cur) return json({ error: 'not found' }, 404);
     return json({ id, status: cur.status }, 202);
   }
-  track(env, ctx, { type: 'finalize', userId: viewer.user.id });
+  track(env, ctx, {
+    type: 'finalize', request, userId: viewer.user.id, docId: id, value: String(row.content || '').length, meta: { auto },
+  });
   return json({ id, status: 'processing' }, 202);
 }
 
@@ -362,24 +409,27 @@ async function handleComplete(request, env, ctx, viewer) {
   const context = typeof (body && body.context) === 'string' ? body.context.slice(-MAX_CONTEXT) : '';
   if (context.trim().length < 5) return json({ text: '' });
 
+  // Metered in ai_calls (feature 'completion'); whether a suggestion was
+  // shown, accepted or dismissed comes from the editor itself.
   const userId = viewer.user ? viewer.user.id : null;
   try {
-    const text = await complete(env, context);
-    track(env, ctx, { type: 'completion', userId, meta: { suggested: Boolean(text) } });
+    const text = await complete(env, context, { feature: 'completion', userId, ctx });
     return json({ text });
   } catch (err) {
     console.error('completion failed', err);
-    track(env, ctx, { type: 'completion', userId, meta: { suggested: false, error: true } });
     return json({ text: '' });
   }
 }
 
 // ------------------------------------------------------------- Reader
 
-async function handleReader(request, env, url, viewer) {
+async function handleReader(request, env, ctx, url, viewer) {
   const lang = await pageLang(request, env, viewer);
   const m = url.pathname.match(/^\/d\/([0-9a-fA-F-]{36})$/);
-  if (!m) return htmlResponse(renderNotFoundPage(lang), 404);
+  if (!m) {
+    noteNotFound(env, ctx, request, url.pathname);
+    return htmlResponse(renderNotFoundPage(lang), 404);
+  }
 
   // Reading is for the owner. Not signed in: go sign in, then come back.
   if (!viewer.user) {
@@ -390,7 +440,10 @@ async function handleReader(request, env, url, viewer) {
   const row = await env.DB.prepare('SELECT * FROM documents WHERE id = ? AND user_id = ?')
     .bind(m[1], viewer.user.id)
     .first();
-  if (!row || row.status === 'deleted') return htmlResponse(renderNotFoundPage(lang), 404);
+  if (!row || row.status === 'deleted') {
+    noteNotFound(env, ctx, request, url.pathname);
+    return htmlResponse(renderNotFoundPage(lang), 404);
+  }
   return htmlResponse(renderDocumentPage(row, lang));
 }
 
@@ -408,20 +461,47 @@ async function pageLang(request, env, viewer) {
 
 // New drafts are throttled tightly (that is where spam would come from);
 // saves are generous, because autosave fires after every pause in typing.
-async function limitDocumentCreates(request, env, viewer) {
-  return enforceRateLimit(request, {
+async function limitDocumentCreates(request, env, ctx, viewer) {
+  return throttle(request, env, ctx, {
     bucket: 'documents-create',
     limit: env.WRITER_ACCESS_KEY || viewer.user ? 300 : 40,
     windowMs: HOUR_MS,
   });
 }
 
-async function limitDocumentWrites(request, env) {
-  return enforceRateLimit(request, {
+async function limitDocumentWrites(request, env, ctx) {
+  return throttle(request, env, ctx, {
     bucket: 'documents-write',
     limit: env.WRITER_ACCESS_KEY ? 3000 : 1500,
     windowMs: HOUR_MS,
   });
+}
+
+// A rate limit that also tells /admin, once per window and address, that
+// it started refusing someone.
+function throttle(request, env, ctx, opts) {
+  return enforceRateLimit(request, {
+    ...opts,
+    onLimit: () => track(env, ctx, { type: 'rate_limited', request, meta: { bucket: opts.bucket } }),
+  });
+}
+
+function noteWriting(env, ctx, request, viewer, docId, chars) {
+  const pending = recordWriting(env, { docId, userId: viewer.user ? viewer.user.id : null, chars });
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(pending);
+}
+
+// Broken links and probes, from browsers only, at most 20 an hour per
+// address. Files browsers ask for on their own are not broken links.
+const AUTOMATIC_REQUESTS = /^\/(favicon\.ico|apple-touch-icon[\w-]*\.png|robots\.txt|sitemap\.xml|\.well-known\/.*)$/;
+
+function noteNotFound(env, ctx, request, pathname) {
+  if (AUTOMATIC_REQUESTS.test(pathname) || isBot(request.headers.get('User-Agent') || '')) return;
+  const work = (async () => {
+    const flood = await enforceRateLimit(request, { bucket: 'not-found', limit: 20, windowMs: HOUR_MS });
+    if (!flood) await track(env, null, { type: 'not_found', request, path: normalizePath(pathname) });
+  })().catch(() => {});
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(work);
 }
 
 // ------------------------------------------------------------ Helpers

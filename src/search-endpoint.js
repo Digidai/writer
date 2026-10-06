@@ -4,7 +4,7 @@ import { ownerScope } from './auth.js';
 
 // Search the viewer's own archive. Semantic results are re-checked against
 // ownership in D1, so the vector index can never surface someone else's piece.
-export async function searchDocumentsData(env, url, { mapDoc = (row) => row, limit = 50, viewer } = {}) {
+export async function searchDocumentsData(env, url, { mapDoc = (row) => row, limit = 50, viewer, ctx = null } = {}) {
   const q = (url.searchParams.get('q') || '').trim().slice(0, 100);
   if (!q) return { documents: [], query: '', mode: 'keyword', fallback: false };
 
@@ -13,7 +13,7 @@ export async function searchDocumentsData(env, url, { mapDoc = (row) => row, lim
   const safeLimit = Math.max(1, Math.min(limit, 100));
   if (requestedMode === 'semantic' && env.WRITER_ACCESS_KEY) {
     const userId = viewer && viewer.user ? viewer.user.id : null;
-    const semantic = await searchSemanticIds(env, q, { limit: safeLimit, userId });
+    const semantic = await searchSemanticIds(env, q, { limit: safeLimit, userId, ctx });
     if (semantic) {
       const rows = await hydrateArchivedRowsByIds(env, semantic.ids, { limit: safeLimit, scope });
       return { documents: rows.map((r) => mapDoc(r)), query: q, mode: 'semantic', fallback: false };

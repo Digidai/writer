@@ -44,7 +44,7 @@ const TOOLS = [
   },
 ];
 
-export async function handleMcpRequest(request, env) {
+export async function handleMcpRequest(request, env, ctx = null) {
   if (!env.WRITER_ACCESS_KEY) return notFound(request);
   if (request.method === 'OPTIONS') return options(request);
   if (!isAuthorized(request, env.WRITER_ACCESS_KEY)) return unauthorized(request);
@@ -60,12 +60,12 @@ export async function handleMcpRequest(request, env) {
     return json(request, rpcError(null, -32600, 'Invalid Request'));
   }
 
-  const response = await handleRpc(payload, env);
+  const response = await handleRpc(payload, env, ctx);
   if (response === null) return new Response(null, { status: 202, headers: corsHeaders(request) });
   return json(request, response);
 }
 
-async function handleRpc(payload, env) {
+async function handleRpc(payload, env, ctx = null) {
   const id = hasOwn(payload, 'id') ? payload.id : null;
   if (payload.jsonrpc !== '2.0' || typeof payload.method !== 'string') {
     return rpcError(id, -32600, 'Invalid Request');
@@ -91,7 +91,7 @@ async function handleRpc(payload, env) {
     const name = String(params.name || '');
     const args = params.arguments && typeof params.arguments === 'object' ? params.arguments : {};
     try {
-      const data = await callTool(env, name, args);
+      const data = await callTool(env, name, args, ctx);
       return rpcResult(id, { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data });
     } catch (err) {
       return rpcResult(id, {
@@ -103,9 +103,9 @@ async function handleRpc(payload, env) {
   return rpcError(id, -32601, `Method not found: ${method}`);
 }
 
-async function callTool(env, name, args) {
+async function callTool(env, name, args, ctx = null) {
   if (name === 'list') return listTool(env, args);
-  if (name === 'search') return searchTool(env, args);
+  if (name === 'search') return searchTool(env, args, ctx);
   if (name === 'get') return getTool(env, args);
   throw new Error(`Unknown tool: ${name}`);
 }
@@ -132,14 +132,14 @@ async function listTool(env, args) {
   };
 }
 
-async function searchTool(env, args) {
+async function searchTool(env, args, ctx = null) {
   const query = String(args.query || '').trim().slice(0, 100);
   if (!query) return { mode: 'keyword', fallback: false, matches: [] };
   const mode = parseSearchMode(args.mode);
   const limit = clampInt(args.limit, 20, 1, 50);
 
   if (mode === 'semantic') {
-    const semantic = await searchSemanticIds(env, query, { limit });
+    const semantic = await searchSemanticIds(env, query, { limit, ctx });
     if (semantic) {
       // Operator-level access: the instance key reads every account's archive.
       const rows = await hydrateArchivedRowsByIds(env, semantic.ids, { limit, scope: EVERYTHING });

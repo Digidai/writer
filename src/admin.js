@@ -14,13 +14,17 @@ import { launchPipeline, sweepIdleDrafts, fileKey } from './agent.js';
 import { deleteDocumentVector, upsertDocumentVector, semanticFeatureEnabled } from './semantic.js';
 import { emailConfigured } from './email.js';
 import { normalizeEmail } from './auth.js';
-import { track } from './analytics.js';
+import { track, normalizePath } from './analytics.js';
 import { escapeLike } from './search.js';
 import { WRITER_VERSION } from './version.js';
+import { errorText, USD_PER_NEURON } from './ai-usage.js';
+import {
+  parseRange, overviewReport, trafficReport, pageviewLog, productReport, aiReport, aiCallLog, cloudflareUsage,
+  eventLog, eventsForCsv, aiCallsForCsv, pageviewsForCsv,
+} from './admin-analytics.js';
 
 export const ADMIN_COOKIE = '__Host-writer_admin';
 const ADMIN_TTL_MS = 12 * 60 * 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
 const STUCK_MS = 15 * 60 * 1000;
 // Global brute-force brake: this many sign-in attempts per hour, from
 // anywhere. The counter is keyed by a hash of the current password, so
@@ -55,6 +59,7 @@ export async function handleAdmin(request, env, ctx, url, now = Date.now()) {
     return await route(request, env, ctx, url, path, method, session, now);
   } catch (err) {
     console.error('admin error', err);
+    track(env, ctx, { type: 'server_error', request, path: normalizePath(path), meta: { method, message: errorText(err) } });
     return json({ error: 'internal error' }, 500);
   }
 }
@@ -62,11 +67,17 @@ export async function handleAdmin(request, env, ctx, url, now = Date.now()) {
 async function route(request, env, ctx, url, path, method, session, now) {
   const q = url.searchParams;
   if (path === '/api/admin/logout' && method === 'POST') return logout(env, session);
-  if (path === '/api/admin/overview' && method === 'GET') return json(await overview(env, days(q), now));
-  if (path === '/api/admin/traffic' && method === 'GET') return json(await traffic(env, days(q), now));
+  const range = () => parseRange(q, now);
+  if (path === '/api/admin/overview' && method === 'GET') return json(await overview(env, range(), now));
+  if (path === '/api/admin/traffic' && method === 'GET') return json(await trafficReport(env, range(), q));
+  if (path === '/api/admin/pageviews' && method === 'GET') return json(await pageviewLog(env, range(), q));
+  if (path === '/api/admin/product' && method === 'GET') return json(await productReport(env, range()));
+  if (path === '/api/admin/ai' && method === 'GET') return json(await aiReport(env, range(), q, now));
+  if (path === '/api/admin/ai/calls' && method === 'GET') return json(await aiCallLog(env, range(), q));
+  if (path === '/api/admin/ai/cloudflare' && method === 'GET') return json(await cloudflareUsage(env, range()));
   if (path === '/api/admin/users' && method === 'GET') return json(await listUsers(env, q));
   if (path === '/api/admin/documents' && method === 'GET') return json(await listDocuments(env, q));
-  if (path === '/api/admin/events' && method === 'GET') return json(await listEvents(env, q));
+  if (path === '/api/admin/events' && method === 'GET') return json(await eventLog(env, range(), q));
   if (path === '/api/admin/config' && method === 'GET') return json(await readConfig(env));
   if (path === '/api/admin/config' && method === 'PUT') return updateConfig(request, env, ctx);
   if (path === '/api/admin/sweep' && method === 'POST') {
@@ -76,6 +87,15 @@ async function route(request, env, ctx, url, path, method, session, now) {
   }
   if (path === '/api/admin/export/users.csv' && method === 'GET') return exportUsersCsv(env);
   if (path === '/api/admin/export/documents.csv' && method === 'GET') return exportDocumentsCsv(env);
+  if (path === '/api/admin/export/events.csv' && method === 'GET') {
+    return csv('writer-events', EVENT_COLUMNS, await eventsForCsv(env, range(), q));
+  }
+  if (path === '/api/admin/export/ai_calls.csv' && method === 'GET') {
+    return csv('writer-model-calls', AI_COLUMNS, await aiCallsForCsv(env, range(), q));
+  }
+  if (path === '/api/admin/export/pageviews.csv' && method === 'GET') {
+    return csv('writer-pageviews', PAGEVIEW_COLUMNS, await pageviewsForCsv(env, range(), q));
+  }
 
   let m = path.match(new RegExp(`^/api/admin/users/(${UUID})(?:/(disable|enable|signout))?$`));
   if (m) {
@@ -121,7 +141,12 @@ async function adminSession(request, env, now) {
 }
 
 async function login(request, env, ctx, now) {
-  const limited = await enforceRateLimit(request, { bucket: 'admin-login', limit: 5, windowMs: 15 * 60 * 1000 });
+  const limited = await enforceRateLimit(request, {
+    bucket: 'admin-login',
+    limit: 5,
+    windowMs: 15 * 60 * 1000,
+    onLimit: () => track(env, ctx, { type: 'rate_limited', request, meta: { bucket: 'admin-login' } }),
+  });
   if (limited) return limited;
 
   // Spend the attempt before comparing, atomically: concurrent guesses
@@ -134,7 +159,7 @@ async function login(request, env, ctx, now) {
   const body = await readJson(request);
   const password = body && typeof body.password === 'string' ? body.password : '';
   if (!password || !safeEqual(password, env.ADMIN_PASSWORD)) {
-    track(env, ctx, { type: 'admin_login_failed' });
+    track(env, ctx, { type: 'admin_login_failed', request });
     return json({ error: 'invalid_password' }, 401);
   }
 
@@ -142,7 +167,7 @@ async function login(request, env, ctx, now) {
   await env.DB.prepare('INSERT INTO admin_sessions (token_hash, created_at, expires_at) VALUES (?, ?, ?)')
     .bind(await sessionHash(env, token), nowIso(now), nowIso(now + ADMIN_TTL_MS))
     .run();
-  track(env, ctx, { type: 'admin_login' });
+  track(env, ctx, { type: 'admin_login', request });
   return json({ ok: true }, 200, {
     'Set-Cookie': serializeCookie(ADMIN_COOKIE, token, { maxAge: ADMIN_TTL_MS / 1000, sameSite: 'Strict' }),
   });
@@ -155,118 +180,55 @@ async function logout(env, session) {
 
 // ----------------------------------------------------------- numbers
 
-function days(q) {
-  const n = Number(q.get('days'));
-  return Number.isFinite(n) ? Math.max(1, Math.min(180, Math.floor(n))) : 30;
-}
-
-function dayString(ms) {
-  return new Date(ms).toISOString().slice(0, 10);
-}
-
 async function count(env, sql, ...binds) {
   const row = await env.DB.prepare(sql).bind(...binds).first();
   const v = row ? Number(Object.values(row)[0]) : 0;
   return Number.isFinite(v) ? v : 0;
 }
 
+// The analytics (src/admin-analytics.js) plus what only management needs:
+// documents by state, unclaimed drafts, stuck runs and the system.
 export async function overview(env, range, now = Date.now()) {
-  const since = dayString(now - (range - 1) * DAY_MS);
-  const eventCount = (type) => count(env, 'SELECT COUNT(*) AS n FROM events WHERE type = ? AND day >= ?', type, since);
-
-  const [
-    pageviews, visitors, signups, logins, docsCreated, finalized, archived, completions, suggested,
-    accepts, fallback, heuristic, activeWriters, users, disabled, anonDrafts, legacy, stuck, byStatus, series, dailyVisitors,
-  ] = await Promise.all([
-    eventCount('pageview'),
-    count(env, `SELECT COUNT(*) AS n FROM (SELECT DISTINCT day, visitor FROM events WHERE type = 'pageview' AND day >= ?)`, since),
-    eventCount('signup'),
-    eventCount('login'),
-    eventCount('doc_create'),
-    eventCount('finalize'),
-    eventCount('archived'),
-    eventCount('completion'),
-    count(env, `SELECT COUNT(*) AS n FROM events WHERE type = 'completion' AND day >= ? AND json_extract(meta, '$.suggested') = 1`, since),
-    eventCount('completion_accept'),
-    count(env, `SELECT COUNT(*) AS n FROM events WHERE type = 'archived' AND day >= ? AND json_extract(meta, '$.fallback') = 1`, since),
-    count(env, `SELECT COUNT(*) AS n FROM events WHERE type = 'archived' AND day >= ? AND json_extract(meta, '$.heuristic') = 1`, since),
-    count(env, `SELECT COUNT(DISTINCT user_id) AS n FROM events
-                 WHERE day >= ? AND user_id IS NOT NULL AND type IN ('doc_create', 'finalize', 'completion')`, since),
-    count(env, 'SELECT COUNT(*) AS n FROM users'),
-    count(env, `SELECT COUNT(*) AS n FROM users WHERE status = 'disabled'`),
+  const [report, byStatus, anonDrafts, legacy, stuck, system] = await Promise.all([
+    overviewReport(env, range, now),
+    env.DB.prepare('SELECT status, COUNT(*) AS n FROM documents GROUP BY status').all(),
     count(env, 'SELECT COUNT(*) AS n FROM documents WHERE user_id IS NULL AND anon_id IS NOT NULL'),
     count(env, 'SELECT COUNT(*) AS n FROM documents WHERE user_id IS NULL AND anon_id IS NULL'),
     count(env, `SELECT COUNT(*) AS n FROM documents WHERE status = 'processing' AND updated_at < ?`, nowIso(now - STUCK_MS)),
-    env.DB.prepare('SELECT status, COUNT(*) AS n FROM documents GROUP BY status').all(),
-    env.DB.prepare(
-      `SELECT day, type, COUNT(*) AS n FROM events
-        WHERE day >= ? AND type IN ('pageview', 'signup', 'doc_create', 'archived', 'completion')
-        GROUP BY day, type`
-    ).bind(since).all(),
-    env.DB.prepare(
-      `SELECT day, COUNT(DISTINCT visitor) AS n FROM events WHERE type = 'pageview' AND day >= ? GROUP BY day`
-    ).bind(since).all(),
+    systemInfo(env, { rows: false }),
   ]);
-
   const documents = { draft: 0, processing: 0, archived: 0, deleted: 0 };
   for (const row of byStatus.results || []) documents[row.status] = Number(row.n) || 0;
-
-  return {
-    range,
-    since,
-    traffic: { pageviews, visitors },
-    accounts: { users, disabled, signups, logins, activeWriters },
-    writing: { docsCreated, finalized, archived, anonDrafts, legacy, stuck, documents },
-    ai: {
-      completions,
-      suggested,
-      accepts,
-      acceptRate: suggested ? accepts / suggested : 0,
-      fallback,
-      heuristic,
-    },
-    daily: dailySeries(since, range, series.results || [], dailyVisitors.results || []),
-    system: {
-      version: WRITER_VERSION,
-      email: emailConfigured(env),
-      registration: await registrationStatus(env),
-      semantic: semanticFeatureEnabled(env),
-      siteLock: Boolean(env.WRITER_ACCESS_KEY),
-    },
-  };
+  return { ...report, writing: { ...report.writing, anonDrafts, legacy, stuck, documents }, system };
 }
 
-function dailySeries(since, range, rows, visitorRows) {
-  const start = Date.parse(`${since}T00:00:00Z`);
-  const byDay = new Map();
-  for (let i = 0; i < range; i++) {
-    const day = dayString(start + i * DAY_MS);
-    byDay.set(day, { day, pageviews: 0, visitors: 0, signups: 0, docsCreated: 0, archived: 0, completions: 0 });
-  }
-  const key = { pageview: 'pageviews', signup: 'signups', doc_create: 'docsCreated', archived: 'archived', completion: 'completions' };
-  for (const row of rows) {
-    const entry = byDay.get(row.day);
-    if (entry && key[row.type]) entry[key[row.type]] = Number(row.n) || 0;
-  }
-  for (const row of visitorRows) {
-    const entry = byDay.get(row.day);
-    if (entry) entry.visitors = Number(row.n) || 0;
-  }
-  return [...byDay.values()];
-}
+// Row counts for the settings page. The append-only tables are estimated
+// from their id range (two index lookups) instead of counted row by row:
+// D1 bills every row a COUNT(*) reads.
+const COUNTED_TABLES = ['documents', 'users', 'sessions', 'writing_days'];
+const ESTIMATED_TABLES = ['events', 'pageviews', 'ai_calls'];
 
-export async function traffic(env, range, now = Date.now()) {
-  const since = dayString(now - (range - 1) * DAY_MS);
-  const top = (column) => env.DB.prepare(
-    `SELECT COALESCE(${column}, '') AS key, COUNT(*) AS views, COUNT(DISTINCT day || ':' || visitor) AS visitors
-       FROM events WHERE type = 'pageview' AND day >= ?
-      GROUP BY COALESCE(${column}, '') ORDER BY views DESC LIMIT 15`
-  ).bind(since).all();
-  const [paths, referrers, countries, devices] = await Promise.all([
-    top('path'), top('referrer'), top('country'), top('device'),
+async function tableRows(env) {
+  const counted = await Promise.all(COUNTED_TABLES.map((t) => count(env, `SELECT COUNT(*) AS n FROM ${t}`).catch(() => 0)));
+  const estimated = await Promise.all(ESTIMATED_TABLES.map((t) =>
+    count(env, `SELECT COALESCE(MAX(id) - MIN(id) + 1, 0) AS n FROM ${t}`).catch(() => 0)));
+  return Object.fromEntries([
+    ...COUNTED_TABLES.map((t, i) => [t, counted[i]]),
+    ...ESTIMATED_TABLES.map((t, i) => [t, estimated[i]]),
   ]);
-  const rows = (r) => (r.results || []).map((x) => ({ key: x.key, views: Number(x.views), visitors: Number(x.visitors) }));
-  return { range, since, paths: rows(paths), referrers: rows(referrers), countries: rows(countries), devices: rows(devices) };
+}
+
+async function systemInfo(env, { rows = true } = {}) {
+  return {
+    version: WRITER_VERSION,
+    email: emailConfigured(env),
+    registration: await registrationStatus(env),
+    semantic: semanticFeatureEnabled(env),
+    siteLock: Boolean(env.WRITER_ACCESS_KEY),
+    analyticsSecret: Boolean(env.ANALYTICS_SECRET),
+    cloudflareAnalytics: Boolean(env.CF_ANALYTICS_TOKEN && env.CF_ACCOUNT_ID),
+    ...(rows ? { rows: await tableRows(env) } : {}),
+  };
 }
 
 // ------------------------------------------------------------- users
@@ -303,21 +265,32 @@ async function userDetail(env, id) {
     .bind(id)
     .first();
   if (!user) return json({ error: 'not found' }, 404);
-  const [sessions, documents, events] = await Promise.all([
+  const [sessions, documents, events, ai, writing] = await Promise.all([
     env.DB.prepare('SELECT created_at, last_seen_at, expires_at, user_agent FROM sessions WHERE user_id = ? ORDER BY last_seen_at DESC LIMIT 20')
       .bind(id).all(),
     env.DB.prepare(
       `SELECT id, title, status, category, updated_at, archived_at, length(content) AS chars
          FROM documents WHERE user_id = ? ORDER BY updated_at DESC LIMIT 100`
     ).bind(id).all(),
-    env.DB.prepare('SELECT id, ts, type, meta FROM events WHERE user_id = ? AND type != ? ORDER BY id DESC LIMIT 30')
-      .bind(id, 'pageview').all(),
+    env.DB.prepare('SELECT id, ts, type, doc_id, value, meta FROM events WHERE user_id = ? ORDER BY id DESC LIMIT 30')
+      .bind(id).all(),
+    env.DB.prepare(
+      `SELECT feature, COUNT(*) AS calls, SUM(COALESCE(neurons, 0)) AS neurons, SUM(input_tokens) AS input,
+              SUM(output_tokens) AS output, SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors
+         FROM ai_calls WHERE user_id = ? GROUP BY feature`
+    ).bind(id).all(),
+    env.DB.prepare(
+      `SELECT COUNT(DISTINCT day) AS days, SUM(saves) AS saves, MIN(day) AS first, MAX(day) AS last
+         FROM writing_days WHERE user_id = ?`
+    ).bind(id).first(),
   ]);
   return json({
     user: { ...user, settings: safeJson(user.settings) },
     sessions: sessions.results || [],
     documents: documents.results || [],
     events: (events.results || []).map((e) => ({ ...e, meta: safeJson(e.meta) })),
+    ai: (ai.results || []).map((r) => ({ ...r, usd: (Number(r.neurons) || 0) * USD_PER_NEURON })),
+    writing: writing || {},
   });
 }
 
@@ -346,6 +319,8 @@ async function deleteUser(env, ctx, id) {
   await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id).run();
   await env.DB.prepare('DELETE FROM login_codes WHERE email = ?').bind(user.email).run();
   await env.DB.prepare('UPDATE events SET user_id = NULL WHERE user_id = ?').bind(id).run();
+  await env.DB.prepare('UPDATE ai_calls SET user_id = NULL WHERE user_id = ?').bind(id).run();
+  await env.DB.prepare('UPDATE writing_days SET user_id = NULL WHERE user_id = ?').bind(id).run();
   await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
   audit(env, ctx, 'user_delete', null, { documents: (results || []).length });
   return json({ ok: true, documents: (results || []).length });
@@ -400,11 +375,21 @@ async function documentDetail(env, id) {
   ).bind(id).first();
   if (!row) return json({ error: 'not found' }, 404);
   const { anon_id: anonId, ...doc } = row;
+  const [ai, events] = await Promise.all([
+    env.DB.prepare(
+      `SELECT id, ts, feature, model, status, error, fallback, latency_ms, input_tokens, cached_tokens, output_tokens,
+              reasoning_tokens, neurons, turn, tool_calls, finish_reason
+         FROM ai_calls WHERE doc_id = ? ORDER BY id DESC LIMIT 100`
+    ).bind(id).all(),
+    env.DB.prepare('SELECT id, ts, type, value, meta FROM events WHERE doc_id = ? ORDER BY id DESC LIMIT 50').bind(id).all(),
+  ]);
   return json({
     ...doc,
     anonymous: Boolean(anonId),
     tags: safeJson(doc.tags) || [],
     agent_trace: safeJson(doc.agent_trace),
+    ai: (ai.results || []).map((c) => ({ ...c, usd: c.neurons === null ? null : c.neurons * USD_PER_NEURON })),
+    events: (events.results || []).map((e) => ({ ...e, meta: safeJson(e.meta) })),
   });
 }
 
@@ -421,7 +406,7 @@ async function documentAction(request, env, ctx, id, action, now) {
     await env.DB.prepare(`UPDATE documents SET status = 'draft', updated_at = ? WHERE id = ? AND status IN ('archived', 'processing', 'draft')`)
       .bind(stamp, id)
       .run();
-    const launched = await launchPipeline(env, id);
+    const launched = await launchPipeline(env, id, { trigger: 'admin' });
     audit(env, ctx, 'doc_rerun', id);
     return json({ ok: launched, status: launched ? 'processing' : row.status });
   }
@@ -451,7 +436,7 @@ async function documentAction(request, env, ctx, id, action, now) {
     await env.DB.prepare('UPDATE documents SET user_id = ?, anon_id = NULL WHERE id = ?').bind(user.id, id).run();
     if (row.status === 'archived') {
       const doc = await env.DB.prepare('SELECT * FROM documents WHERE id = ?').bind(id).first();
-      if (doc) await upsertDocumentVector(env, doc);
+      if (doc) await upsertDocumentVector(env, doc, { ctx });
     }
     audit(env, ctx, 'doc_assign', id, { to: user.id });
     return json({ ok: true, user_id: user.id });
@@ -480,43 +465,19 @@ async function removeDocumentFiles(env, doc) {
   await deleteDocumentVector(env, doc.id);
 }
 
-// ------------------------------------------------------------ events
-
-async function listEvents(env, q) {
-  const limit = Math.max(1, Math.min(200, Number(q.get('limit')) || 100));
-  const before = Number(q.get('before')) || 0;
-  const type = (q.get('type') || '').trim();
-  const clauses = [];
-  const binds = [];
-  if (type) {
-    clauses.push('e.type = ?');
-    binds.push(type);
-  } else {
-    clauses.push(`e.type != 'pageview'`);
-  }
-  if (before > 0) {
-    clauses.push('e.id < ?');
-    binds.push(before);
-  }
-  const { results } = await env.DB.prepare(
-    `SELECT e.id, e.ts, e.type, e.path, e.referrer, e.country, e.device, e.user_id, e.meta, u.email
-       FROM events e LEFT JOIN users u ON u.id = e.user_id
-      WHERE ${clauses.join(' AND ')}
-      ORDER BY e.id DESC LIMIT ?`
-  ).bind(...binds, limit).all();
-  const events = (results || []).map((e) => ({ ...e, meta: safeJson(e.meta) }));
-  return { events, next: events.length === limit ? events[events.length - 1].id : null };
-}
-
 // ------------------------------------------------------------ config
 
 async function readConfig(env) {
+  const system = await systemInfo(env);
   return {
-    registration: await registrationStatus(env),
+    registration: system.registration,
     defaults: await readSettings(env),
-    email: { configured: emailConfigured(env), from: env.MAIL_FROM || 'Writer <noreply@genedai.md>' },
-    semantic: semanticFeatureEnabled(env),
-    siteLock: Boolean(env.WRITER_ACCESS_KEY),
+    email: { configured: system.email, from: env.MAIL_FROM || 'Writer <noreply@genedai.md>' },
+    semantic: system.semantic,
+    siteLock: system.siteLock,
+    analyticsSecret: system.analyticsSecret,
+    cloudflareAnalytics: system.cloudflareAnalytics,
+    rows: system.rows,
     version: WRITER_VERSION,
   };
 }
@@ -554,6 +515,13 @@ async function exportDocumentsCsv(env) {
   ).all();
   return csv('writer-documents', ['id', 'email', 'status', 'title', 'category', 'created_at', 'updated_at', 'archived_at', 'chars'], results || []);
 }
+
+const EVENT_COLUMNS = ['ts', 'type', 'email', 'user_id', 'doc_id', 'path', 'referrer', 'country', 'device', 'value', 'meta'];
+const AI_COLUMNS = ['ts', 'feature', 'model', 'status', 'error', 'fallback', 'latency_ms', 'input_tokens', 'cached_tokens',
+  'output_tokens', 'reasoning_tokens', 'neurons', 'usd', 'estimated', 'email', 'user_id', 'doc_id', 'turn', 'tool_calls',
+  'finish_reason', 'log_id'];
+const PAGEVIEW_COLUMNS = ['ts', 'path', 'entry', 'session', 'channel', 'referrer', 'utm_source', 'utm_medium', 'utm_campaign',
+  'country', 'device', 'browser', 'os', 'lang', 'viewport', 'engaged_ms', 'scroll', 'ttfb', 'fcp', 'lcp', 'inp', 'cls'];
 
 // Every cell is quoted (semicolon locales split on ;), and cells that start
 // with = + - @ are prefixed so spreadsheets do not run them as formulas.

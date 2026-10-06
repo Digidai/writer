@@ -125,3 +125,31 @@ export async function signIn(client, outbox, email) {
   if (start.status !== 200) throw new Error(`start failed ${start.status} ${JSON.stringify(start.body)}`);
   return client.json('/api/auth/verify', { method: 'POST', body: { email, code: lastCode(outbox, email) } });
 }
+
+// A Workers AI stand-in. Answers come from a queue (a response, an Error to
+// throw, or a function of (model, inputs, options)); the last one repeats.
+// Every call is recorded, and each success sets aiGatewayLogId like the
+// real binding does.
+export function fakeAI(...answers) {
+  const calls = [];
+  const ai = {
+    calls,
+    aiGatewayLogId: null,
+    async run(model, inputs, options) {
+      calls.push({ model, inputs, options });
+      const next = answers.length > 1 ? answers.shift() : answers[0];
+      const out = typeof next === 'function' ? next(model, inputs, options) : next;
+      if (out instanceof Error) throw out;
+      ai.aiGatewayLogId = `log-${calls.length}`;
+      return out;
+    },
+  };
+  return ai;
+}
+
+export function chatAnswer(content, usage = {}, { toolCalls } = {}) {
+  return {
+    choices: [{ message: { role: 'assistant', content, tool_calls: toolCalls }, finish_reason: toolCalls ? 'tool_calls' : 'stop' }],
+    usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, ...usage },
+  };
+}

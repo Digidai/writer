@@ -1,7 +1,8 @@
 const RL_ORIGIN = 'https://writer-rate-limit.local';
 
 // `identity` overrides the client IP, e.g. to throttle per email address.
-export async function enforceRateLimit(request, { bucket, limit, windowMs, identity, cache = caches.default, now = Date.now }) {
+// `onLimit` runs once per window, on the first refusal (for analytics).
+export async function enforceRateLimit(request, { bucket, limit, windowMs, identity, onLimit, cache = caches.default, now = Date.now }) {
   if (!bucket || !Number.isFinite(limit) || limit <= 0 || !Number.isFinite(windowMs) || windowMs <= 0) {
     throw new Error('invalid rate limit config');
   }
@@ -14,10 +15,22 @@ export async function enforceRateLimit(request, { bucket, limit, windowMs, ident
 
   if (state.resetAt <= nowMs) {
     state.count = 0;
+    state.noted = false;
     state.resetAt = nowMs + windowMs;
   }
 
-  if (state.count >= limit) return tooMany(state.resetAt, nowMs);
+  if (state.count >= limit) {
+    if (onLimit && !state.noted) {
+      state.noted = true;
+      await writeState(cache, cacheKey, state, nowMs);
+      try {
+        onLimit();
+      } catch {
+        /* reporting never changes the answer */
+      }
+    }
+    return tooMany(state.resetAt, nowMs);
+  }
 
   state.count += 1;
   await writeState(cache, cacheKey, state, nowMs);
@@ -50,7 +63,7 @@ function makeCacheKey(ip, bucket) {
 }
 
 function freshState(nowMs, windowMs) {
-  return { count: 0, resetAt: nowMs + windowMs };
+  return { count: 0, noted: false, resetAt: nowMs + windowMs };
 }
 
 async function readState(cache, key) {
@@ -60,6 +73,7 @@ async function readState(cache, key) {
     const state = await hit.json();
     return {
       count: Number(state && state.count) || 0,
+      noted: Boolean(state && state.noted),
       resetAt: Number(state && state.resetAt) || 0,
     };
   } catch {
@@ -71,7 +85,7 @@ async function writeState(cache, key, state, nowMs) {
   const ttl = Math.max(1, Math.ceil((state.resetAt - nowMs) / 1000));
   await cache.put(
     key,
-    new Response(JSON.stringify({ count: state.count, resetAt: state.resetAt }), {
+    new Response(JSON.stringify({ count: state.count, noted: state.noted, resetAt: state.resetAt }), {
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
         'Cache-Control': `max-age=${ttl}`,

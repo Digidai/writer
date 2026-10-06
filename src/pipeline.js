@@ -23,7 +23,8 @@ const STEP_RETRIES = { retries: { limit: 2, delay: '5 seconds', backoff: 'expone
 
 export class WriterPipeline extends WorkflowEntrypoint {
   async run(event, step) {
-    const { docId } = event.payload;
+    const { docId, trigger = 'manual' } = event.payload;
+    const startedAt = event.timestamp ? new Date(event.timestamp).getTime() : null;
 
     const doc = await step.do('load-document', () => this.loadDoc(docId));
     if (!doc) return { skipped: docId };
@@ -41,7 +42,7 @@ export class WriterPipeline extends WorkflowEntrypoint {
       // so replays after eviction reconstruct the exact same loop state.
       let r;
       try {
-        r = await step.do(`agent-turn-${turn}`, STEP_RETRIES, () => this.turn(messages, doc));
+        r = await step.do(`agent-turn-${turn}`, STEP_RETRIES, () => this.turn(messages, doc, turn));
       } catch (err) {
         trace.push({ turn, error: String(err && err.message ? err.message : err).slice(0, 300) });
         break;
@@ -89,14 +90,26 @@ export class WriterPipeline extends WorkflowEntrypoint {
     }
 
     const persisted = await step.do('persist', () => persistArchive(this.env, doc, finish, trace, settings));
-    if (persisted.skipped) return { skipped: doc.id, reason: persisted.reason, turns: trace.length };
+    if (persisted.skipped) {
+      await step.do('record-skip', () => recordEvent(this.env, {
+        type: 'archive_skipped', userId: doc.user_id, docId: doc.id, meta: { reason: persisted.reason, trigger },
+      }));
+      return { skipped: doc.id, reason: persisted.reason, turns: trace.length };
+    }
 
     await step.do('store-file', () => storeFile(this.env, persisted.final));
     await step.do('index-vector', () => upsertDocumentVector(this.env, { ...persisted.final, user_id: doc.user_id }));
     await step.do('record-event', () => recordEvent(this.env, {
       type: 'archived',
       userId: doc.user_id,
-      meta: archiveMeta(trace, finish, persisted.final.category),
+      docId: doc.id,
+      // How long filing took, from "finish" to archived.
+      value: startedAt ? Math.max(0, Date.now() - startedAt) : null,
+      meta: archiveMeta(trace, finish, persisted.final.category, {
+        trigger,
+        chars: doc.content.length,
+        formatted: persisted.final.formatted !== doc.content,
+      }),
     }));
     return { archived: doc.id, category: persisted.final.category, turns: trace.length };
   }
@@ -115,13 +128,13 @@ export class WriterPipeline extends WorkflowEntrypoint {
   }
 
   // One reasoning turn: call the model, execute any tool calls it makes.
-  async turn(messages, doc) {
+  async turn(messages, doc, turn = null) {
     const r = await agentChat(this.env, {
       messages,
       tools: TOOL_SPECS,
       max_tokens: 4096,
       temperature: 0.3,
-    });
+    }, { feature: 'agent', userId: doc.user_id, docId: doc.id, turn, affinity: `writer-${doc.id}` });
 
     let finish = null;
     const toolResults = [];
@@ -190,8 +203,9 @@ export function docOwnerScope(doc) {
 }
 
 // What /admin shows about each run: which model answered, how many turns,
-// and whether it fell back to Qwen or to the heuristics.
-export function archiveMeta(trace, finish, category) {
+// whether it fell back to Qwen or to the heuristics, what started it, and
+// whether the agent typeset the text or only filed it.
+export function archiveMeta(trace, finish, category, extra = {}) {
   const models = trace.map((t) => String(t.model || '')).filter(Boolean);
   const last = models[models.length - 1] || '';
   return {
@@ -200,6 +214,7 @@ export function archiveMeta(trace, finish, category) {
     fallback: models.some((m) => /qwen/i.test(m)),
     heuristic: !finish,
     category: String(category || '').slice(0, 24),
+    ...extra,
   };
 }
 

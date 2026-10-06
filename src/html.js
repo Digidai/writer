@@ -32,7 +32,7 @@ ${BOOT}
 ${body}
 <div class="toast" id="toast" hidden></div>
 <script type="module" src="/menu.js?v=${WRITER_VERSION}"></script>
-<script type="module" src="/track.js?v=${WRITER_VERSION}"></script>
+<script type="module" src="/track.js"></script>
 ${script}
 </body>
 </html>`;

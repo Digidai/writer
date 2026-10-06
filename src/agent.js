@@ -3,10 +3,13 @@
 // pipeline.js as a Cloudflare Workflow.
 import { readSettings, mergeUserSettings } from './settings.js';
 import { pruneCounters } from './site-config.js';
+import { recordEvent } from './analytics.js';
 
 // Claim a document and launch its archiving workflow. The status guard
 // makes this race-safe: whoever flips draft -> processing launches.
-export async function launchPipeline(env, id, { reclaim = false } = {}) {
+// `trigger` says what started the run (manual, idle, sweep, reclaim,
+// admin); it travels with the run into its 'archived' event.
+export async function launchPipeline(env, id, { reclaim = false, trigger = 'manual' } = {}) {
   const statuses = reclaim ? "('draft', 'processing')" : "('draft')";
   const claimed = await env.DB.prepare(
     `UPDATE documents SET status = 'processing', updated_at = ?
@@ -16,7 +19,7 @@ export async function launchPipeline(env, id, { reclaim = false } = {}) {
     .run();
   if (claimed.meta.changes === 0) return false;
 
-  await env.PIPELINE.create({ id: `${id}-${Date.now()}`, params: { docId: id } });
+  await env.PIPELINE.create({ id: `${id}-${Date.now()}`, params: { docId: id, trigger } });
   return true;
 }
 
@@ -27,7 +30,8 @@ export async function launchPipeline(env, id, { reclaim = false } = {}) {
 //    filed (x3, so the editor's own idle timer gets the first chance).
 //    Anonymous drafts are never filed: archiving needs an account.
 // 3. Housekeeping: expired codes, sessions and counters, unclaimed
-//    anonymous documents after 14 days, analytics events after 180 days.
+//    anonymous documents after 14 days, analytics (events, page views,
+//    model calls, writing days) after 180 days.
 const MAX_LAUNCHES = 5;
 const STUCK_MS = 15 * 60 * 1000;
 const MIN_IDLE_MS = 3 * 3 * 60 * 1000;
@@ -39,17 +43,17 @@ export async function sweepIdleDrafts(env, { now = Date.now() } = {}) {
   const launch = [];
 
   const stuck = await env.DB.prepare(
-    `SELECT id FROM documents WHERE status = 'processing' AND updated_at < ?
+    `SELECT id, user_id FROM documents WHERE status = 'processing' AND updated_at < ?
       ORDER BY updated_at LIMIT ?`
   )
     .bind(new Date(now - STUCK_MS).toISOString(), MAX_LAUNCHES)
     .all();
-  for (const row of stuck.results || []) launch.push(row.id);
+  for (const row of stuck.results || []) launch.push({ id: row.id, userId: row.user_id, trigger: 'reclaim' });
 
   if (launch.length < MAX_LAUNCHES) {
     const site = await readSettings(env);
     const { results } = await env.DB.prepare(
-      `SELECT d.id, d.updated_at, u.settings
+      `SELECT d.id, d.user_id, d.updated_at, u.settings
          FROM documents d JOIN users u ON u.id = d.user_id
         WHERE d.status = 'draft' AND u.status = 'active'
           AND d.updated_at < ? AND length(trim(d.content)) >= 2
@@ -62,15 +66,20 @@ export async function sweepIdleDrafts(env, { now = Date.now() } = {}) {
       if (launch.length >= MAX_LAUNCHES) break;
       const minutes = mergeUserSettings(site, row).idleArchiveMinutes;
       if (!minutes) continue; // this writer archives by hand only
-      if (Date.parse(row.updated_at) < now - minutes * 3 * 60 * 1000) launch.push(row.id);
+      if (Date.parse(row.updated_at) < now - minutes * 3 * 60 * 1000) {
+        launch.push({ id: row.id, userId: row.user_id, trigger: 'sweep' });
+      }
     }
   }
 
-  for (const id of launch) {
+  for (const job of launch) {
     try {
-      await launchPipeline(env, id, { reclaim: true });
+      const launched = await launchPipeline(env, job.id, { reclaim: true, trigger: job.trigger });
+      if (launched) {
+        await recordEvent(env, { type: job.trigger === 'sweep' ? 'auto_archive' : 'pipeline_reclaim', userId: job.userId, docId: job.id, now });
+      }
     } catch (err) {
-      console.error(`sweep: failed for ${id}`, err);
+      console.error(`sweep: failed for ${job.id}`, err);
     }
   }
 
@@ -90,7 +99,12 @@ export async function housekeeping(env, now = Date.now()) {
         WHERE user_id IS NULL AND anon_id IS NOT NULL AND status IN ('draft', 'deleted') AND updated_at < ?`,
       new Date(now - ANON_DRAFT_TTL_MS).toISOString(),
     ],
-    ['DELETE FROM events WHERE ts < ?', new Date(now - EVENT_TTL_MS).toISOString()],
+    // By day, so each run reads only the expired rows (through the day
+    // indexes) instead of scanning the tables every ten minutes.
+    ['DELETE FROM events WHERE day < ?', new Date(now - EVENT_TTL_MS).toISOString().slice(0, 10)],
+    ['DELETE FROM pageviews WHERE day < ?', new Date(now - EVENT_TTL_MS).toISOString().slice(0, 10)],
+    ['DELETE FROM ai_calls WHERE day < ?', new Date(now - EVENT_TTL_MS).toISOString().slice(0, 10)],
+    ['DELETE FROM writing_days WHERE day < ?', new Date(now - EVENT_TTL_MS).toISOString().slice(0, 10)],
   ];
   for (const [sql, cutoff] of jobs) {
     try {

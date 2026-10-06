@@ -1,3 +1,5 @@
+import { meterCall, usageFrom, estimateTokens, errorText } from './ai-usage.js';
+
 export const SEMANTIC_EMBED_MODEL = '@cf/baai/bge-m3';
 const BACKFILL_BATCH_SIZE = 10;
 
@@ -31,9 +33,10 @@ export function firstEmbeddingVector(payload) {
 // metadata index on user_id). If filtering is unavailable or comes back
 // empty, query wide and let the caller's D1 ownership check do the
 // filtering; callers must always re-check ownership either way.
-export async function searchSemanticIds(env, q, { limit = 50, userId = null } = {}) {
+// `ctx` (a request's) lets the usage record be written after the response.
+export async function searchSemanticIds(env, q, { limit = 50, userId = null, ctx = null } = {}) {
   if (!semanticFeatureEnabled(env)) return null;
-  const vector = await embedText(env, q);
+  const vector = await embedText(env, q, { feature: 'embed', userId, ctx });
   if (!vector) return null;
 
   const topK = Math.max(1, Math.min(limit, 100));
@@ -70,11 +73,11 @@ async function queryIndex(env, vector, options) {
   return ids;
 }
 
-export async function upsertDocumentVector(env, doc) {
+export async function upsertDocumentVector(env, doc, { ctx = null } = {}) {
   if (!semanticFeatureEnabled(env)) return false;
   const source = buildSemanticSource(doc);
   if (!source) return false;
-  const vector = await embedText(env, source);
+  const vector = await embedText(env, source, { feature: 'embed', userId: doc.user_id || null, docId: doc.id, ctx });
   if (!vector) return false;
 
   try {
@@ -136,14 +139,23 @@ export async function backfillArchiveVectors(env, { limit = BACKFILL_BATCH_SIZE 
   return { indexed, skipped, remaining };
 }
 
-async function embedText(env, text) {
+async function embedText(env, text, meter = null) {
   const payload = String(text || '').trim();
   if (!payload) return null;
+  const started = Date.now();
   try {
     const out = await env.AI.run(SEMANTIC_EMBED_MODEL, { text: [payload] });
-    return firstEmbeddingVector(out);
+    const vector = firstEmbeddingVector(out);
+    await meterCall(env, meter, {
+      model: SEMANTIC_EMBED_MODEL,
+      status: vector ? 'ok' : 'empty',
+      latency: Date.now() - started,
+      usage: usageFrom(out) || { input: estimateTokens(payload), cached: 0, output: 0, reasoning: 0, neurons: null, estimated: true },
+    });
+    return vector;
   } catch (err) {
     console.warn('embedding failed', err);
+    await meterCall(env, meter, { model: SEMANTIC_EMBED_MODEL, status: 'error', error: errorText(err), latency: Date.now() - started });
     return null;
   }
 }
