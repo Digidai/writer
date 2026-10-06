@@ -5,6 +5,9 @@ import { toast } from '/toast.js';
 import { makeT, applyDom, resolveLang, locale } from '/i18n.js';
 import { mountMenu } from '/menu.js';
 import { redirectIfLocked } from '/locked.js';
+import { getSession, onSession, signOut } from '/session.js';
+import { openAuthDialog } from '/auth.js';
+import '/track.js';
 
 const FIELDS = [
   {
@@ -63,6 +66,9 @@ const trashEl = document.getElementById('trash-list');
 const trashCountEl = document.getElementById('trash-count');
 const trashEmptyEl = document.getElementById('trash-empty');
 const lockedEl = document.getElementById('locked');
+const accountEl = document.getElementById('account');
+const trashSectionEl = document.querySelector('.trash');
+let localOnlyNoted = false;
 
 function storedSettings() {
   try {
@@ -134,6 +140,13 @@ async function save(key, value) {
       body: JSON.stringify({ [key]: value }),
     });
     if (await redirectIfLocked(res)) return;
+    if (res.status === 401) {
+      // Signed out: the change already applies in this browser; say once
+      // that signing in would carry it to other devices.
+      if (!localOnlyNoted) toast(t('settings.signInToSync'));
+      localOnlyNoted = true;
+      return;
+    }
     if (!res.ok) throw new Error(`settings ${res.status}`);
     settings = await res.json();
     applyAll();
@@ -168,7 +181,45 @@ function applyAll() {
   mountMenu(t);
   render();
   renderTrash();
+  renderAccount();
 }
+
+// ------------------------------------------------------------- account
+
+function renderAccount() {
+  if (!accountEl) return;
+  const session = currentSessionCache;
+  if (!session) {
+    accountEl.hidden = true;
+    return;
+  }
+  accountEl.replaceChildren();
+  const head = el('h2', 'cat-head');
+  head.append(text(t('settings.account')), el('span', 'rule'));
+  const row = el('div', 'setting');
+  const label = el('div', 'setting-label');
+  const action = el('button', 'link-button');
+  action.type = 'button';
+
+  if (session.user) {
+    const name = el('p', 'setting-name');
+    name.textContent = session.user.email;
+    label.append(name);
+    action.textContent = t('nav.signOut');
+    action.addEventListener('click', () => signOut());
+  } else {
+    const desc = el('p', 'setting-desc');
+    desc.textContent = t('settings.signInToSync');
+    label.append(desc);
+    action.textContent = t('nav.signIn');
+    action.addEventListener('click', () => openAuthDialog({ t, reason: 'signin', lang }));
+  }
+  row.append(label, action);
+  accountEl.append(head, row);
+  accountEl.hidden = false;
+}
+
+let currentSessionCache = null;
 
 function settingsChanged(next) {
   if (!next || typeof next !== 'object') return false;
@@ -195,7 +246,8 @@ async function loadTrash() {
     const res = await fetch('/api/documents?status=deleted');
     if (await redirectIfLocked(res)) return;
     if (res.status === 401) {
-      lockedEl.hidden = false;
+      // No account, no trash: anonymous drafts are never deleted this way.
+      if (trashSectionEl) trashSectionEl.hidden = true;
       return;
     }
     if (!res.ok) throw new Error(`trash ${res.status}`);
@@ -303,6 +355,11 @@ async function init() {
     toast(t('settings.toastCached'));
   }
   loadTrash();
+  currentSessionCache = await getSession();
+  renderAccount();
 }
+
+// Signed in from here or the menu: load this account's preferences.
+onSession(() => location.reload());
 
 init();

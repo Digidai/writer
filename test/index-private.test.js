@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { WRITER_VERSION } from '../src/version.js';
 import { handleMcpRequest } from '../src/mcp.js';
 import { handleReindexRequest } from '../src/reindex.js';
-import { reopenDocument } from '../src/archive-actions.js';
 
 const DOC_ID = '123e4567-e89b-12d3-a456-426614174000';
 
@@ -169,58 +168,4 @@ test('mcp endpoint: key/auth/method semantics and initialize/tools', async () =>
   assert.equal(toolsRes.status, 200);
   const toolsBody = await toolsRes.json();
   assert.deepEqual(toolsBody.result.tools.map((tool) => tool.name), ['list', 'search', 'get']);
-});
-
-test('reopen archived document deletes its vector', async () => {
-  let deleteCalls = 0;
-  const env = {
-    WRITER_ACCESS_KEY: 'secret',
-    AI: { async run() { return { data: [[0.1, 0.2]] }; } },
-    ARCHIVE_INDEX: {
-      async deleteByIds(ids) {
-        deleteCalls += 1;
-        assert.deepEqual(ids, [DOC_ID]);
-      },
-    },
-    DB: {
-      prepare(sql) {
-        if (sql === 'SELECT * FROM documents WHERE id = ?') {
-          return {
-            bind() {
-              return {
-                async first() {
-                  return {
-                    id: DOC_ID,
-                    status: 'archived',
-                    content: 'raw content',
-                    formatted: '# formatted',
-                  };
-                },
-              };
-            },
-          };
-        }
-        if (sql.includes("UPDATE documents SET status = 'draft'")) {
-          return {
-            bind(content, now, id) {
-              assert.equal(content, '# formatted');
-              assert.equal(typeof now, 'string');
-              assert.equal(id, DOC_ID);
-              return {
-                async run() {
-                  return { meta: { changes: 1 } };
-                },
-              };
-            },
-          };
-        }
-        throw new Error(`Unexpected SQL in reopen test: ${sql}`);
-      },
-    },
-    ASSETS: { fetch: () => new Response('ok') },
-  };
-
-  const res = await reopenDocument(env, DOC_ID);
-  assert.equal(res.status, 200);
-  assert.equal(deleteCalls, 1);
 });

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Admin · Writer</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/fonts/noto-sans-sc.css">
+<link rel="stylesheet" href="/style.css?v=0.13.0">
+<link rel="stylesheet" href="/admin.css?v=0.13.0">
+<script>try{var s=JSON.parse(localStorage.getItem('writer.settings')||'{}');
+if(s.theme==='light'||s.theme==='dark')document.documentElement.dataset.theme=s.theme;
+var h=(navigator.language||'').toLowerCase();
+var l=s.language==='zh'||s.language==='en'?s.language:(h&&h.includes('zh')?'zh':'en');
+document.documentElement.lang=l==='en'?'en':'zh-CN';}catch(e){}</script>
+</head>
+<body class="admin-body">
+
+<header class="bar">
+  <a class="wordmark" href="/">writer<span class="seal">.</span></a>
+  <div class="bar-right">
+    <span class="admin-badge" data-t="title">Admin</span>
+    <button type="button" class="finish" id="logout" data-t="logout" hidden>Sign out</button>
+  </div>
+</header>
+
+<main class="admin" id="admin">
+  <section class="admin-login" id="login-view" hidden>
+    <form class="login-sheet admin-login-form" id="login-form">
+      <h1 class="auth-title" data-t="login.title">Admin</h1>
+      <p class="auth-sub" data-t="login.sub">Enter the admin password.</p>
+      <input class="auth-input" id="password" type="password" autocomplete="current-password" required>
+      <p class="auth-error" id="login-error" role="alert" hidden></p>
+      <button type="submit" class="auth-submit" id="login-submit" data-t="login.submit">Enter</button>
+    </form>
+  </section>
+
+  <section class="admin-app" id="app-view" hidden>
+    <nav class="admin-tabs" id="tabs" aria-label="Admin sections"></nav>
+    <div class="admin-filters" id="filters" hidden>
+      <div class="segmented admin-range" id="range" role="group"></div>
+    </div>
+    <div class="admin-content" id="content"></div>
+  </section>
+</main>
+
+<div class="admin-tooltip" id="tooltip" role="tooltip" hidden></div>
+<div class="toast" id="toast" hidden></div>
+<script type="module" src="/admin.js?v=0.13.0"></script>
+</body>
+</html>

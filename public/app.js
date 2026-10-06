@@ -8,6 +8,9 @@ import { toast } from '/toast.js';
 import { makeT, applyDom, resolveLang, locale } from '/i18n.js';
 import { mountMenu } from '/menu.js';
 import { redirectIfLocked } from '/locked.js';
+import { getSession, onSession, onBeforeSignOut } from '/session.js';
+import { openAuthDialog } from '/auth.js';
+import { track } from '/track.js';
 
 const input = document.getElementById('input');
 const mirrorText = document.getElementById('mirror-text');
@@ -49,6 +52,12 @@ Object.assign(prefs, readStoredSettings());
 
 let lang = resolveLang(prefs.language, navigator.language);
 let t = makeT(lang);
+
+// Anyone can write; filing a piece needs an account. Until the session
+// is known, behave as signed out (no idle archiving).
+let signedIn = false;
+getSession().then((s) => { signedIn = Boolean(s && s.user); });
+onSession((s) => { signedIn = Boolean(s && s.user); });
 
 const store = {
   get docId() { return localStorage.getItem('writer.docId'); },
@@ -218,6 +227,7 @@ function caretAtEnd() {
 function acceptGhost() {
   const text = state.ghost;
   if (!text) return;
+  track('completion_accept');
   clearGhost();
   const end = input.value.length;
   input.setRangeText(text, end, end, 'end');
@@ -291,6 +301,7 @@ async function doSave() {
         body: JSON.stringify({ content }),
       });
       if (await redirectIfLocked(res)) return;
+      if (res.status === 413) return tooLongWithoutAccount();
       if (!res.ok) throw new Error(`save ${res.status}`);
       const data = await res.json();
       store.docId = data.id;
@@ -309,6 +320,7 @@ async function doSave() {
         state.rev = null;
         return doSave();
       }
+      if (res.status === 413) return tooLongWithoutAccount();
       if (!res.ok) throw new Error(`save ${res.status}`);
       state.rev = (await res.json()).updated_at;
     }
@@ -320,6 +332,15 @@ async function doSave() {
 }
 
 // ------------------------------------------------------------- archive
+
+// Anonymous pieces have a size cap; past it the text stays in the local
+// backup and the writer is told that signing in lifts the limit.
+let anonLimitNoted = false;
+function tooLongWithoutAccount() {
+  setStatus('offline', t('editor.anonLimitStatus'));
+  if (!anonLimitNoted) toast(t('editor.anonLimitToast'), { duration: 8000 });
+  anonLimitNoted = true;
+}
 
 // Save exactly `content` (the finalize snapshot), bypassing the dirty
 // flag. Returns false when the server didn't take it — the caller must
@@ -335,6 +356,7 @@ async function flushExact(content) {
         body: JSON.stringify({ content }),
       });
       if (await redirectIfLocked(res)) return false;
+      if (res.status === 413) return 'too_large';
       if (!res.ok) return false;
       const data = await res.json();
       store.docId = data.id;
@@ -352,6 +374,7 @@ async function flushExact(content) {
       state.rev = null;
       return flushExact(content);
     }
+    if (res.status === 413) return 'too_large';
     if (!res.ok) return false;
     state.rev = (await res.json()).updated_at;
     return true;
@@ -360,12 +383,34 @@ async function flushExact(content) {
   }
 }
 
+// Ask for an email; resolves true once signed in, false if dismissed.
+function askToSignIn(reason) {
+  return new Promise((resolve) => {
+    let done = false;
+    const dialog = openAuthDialog({
+      t,
+      reason,
+      lang,
+      onSuccess(data) {
+        done = true;
+        signedIn = true;
+        toast(t(data && data.claimed ? 'auth.welcomeClaimed' : 'auth.welcome'));
+        resolve(true);
+      },
+    });
+    dialog.addEventListener('close', () => {
+      if (!done) resolve(false);
+    });
+  });
+}
+
 async function finalize(auto = false) {
   if (state.finalizing || state.yielded || !state.ready) return;
   state.finalizing = true; // blocks scheduled saves and re-entry
   cancelCompletion();
   clearTimeout(state.saveTimer);
   const snapshot = input.value;
+  let retryAfterSignIn = false;
 
   try {
     await state.saveChain; // drain any in-flight save first
@@ -373,7 +418,13 @@ async function finalize(auto = false) {
       if (!auto) toast(t('editor.toastEmpty'));
       return;
     }
-    if (!(await flushExact(snapshot))) {
+    const flushed = await flushExact(snapshot);
+    if (flushed === 'too_large' && !signedIn) {
+      // Over the anonymous cap: signing in lifts it, then file as usual.
+      if (!auto) retryAfterSignIn = await askToSignIn('finish');
+      return;
+    }
+    if (flushed !== true) {
       setStatus('offline', t('editor.offline'));
       if (!auto) toast(t('editor.toastSaveFailed'));
       return;
@@ -381,6 +432,12 @@ async function finalize(auto = false) {
 
     const res = await fetch(`/api/documents/${store.docId}/finalize`, { method: 'POST' });
     if (await redirectIfLocked(res)) return;
+    if (res.status === 401) {
+      // Signed out: the draft is safe (saved to this browser's anonymous
+      // id). Ask for an email; signing in claims it, then file it.
+      if (!auto) retryAfterSignIn = await askToSignIn('finish');
+      return;
+    }
     if (!res.ok && res.status !== 202) throw new Error(`finalize ${res.status}`);
     const data = await res.json().catch(() => ({}));
 
@@ -407,6 +464,7 @@ async function finalize(auto = false) {
     toast(t('editor.toastFailed'));
   } finally {
     state.finalizing = false;
+    if (retryAfterSignIn) finalize(false);
   }
 }
 
@@ -579,6 +637,9 @@ input.addEventListener('focus', () => {
   setTimeout(scheduleViewportSync, 80);
 });
 
+// Signing out from the menu waits for this last save.
+onBeforeSignOut(() => (state.dirty ? saveNow() : null));
+
 // Flush pending changes when the page goes away. The backup write is the
 // guarantee; the keepalive PUT is best-effort (and skipped over its quota).
 window.addEventListener('pagehide', () => {
@@ -600,7 +661,9 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('focus', claimOwnership);
 
 // Quietly archive after a long pause, so finished thoughts file themselves.
+// Only for signed-in writers: nobody gets a sign-in sheet they did not ask for.
 setInterval(() => {
+  if (!signedIn) return;
   if (!prefs.idleArchiveMinutes) return; // 0 means manual archiving only
   if (state.finalizing || state.composing || state.yielded || !state.ready) return;
   if (document.visibilityState !== 'visible') return;

@@ -1,0 +1,420 @@
+/* Admin console: the same quiet desk, laid out for reading numbers. */
+
+.admin-body {
+  /* Chart marks: muted ink for the series, the seal for the one bar the
+     story is about (today). Validated with the dataviz palette checks:
+     light #8a8478/#b3432b, dark #757064/#dd7052. */
+  --viz-base: #8a8478;
+  --viz-accent: #b3432b;
+  --viz-grid: var(--hairline);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .admin-body {
+    --viz-base: #757064;
+    --viz-accent: #dd7052;
+  }
+}
+:root[data-theme="dark"] .admin-body {
+  --viz-base: #757064;
+  --viz-accent: #dd7052;
+}
+
+.admin {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding:
+    calc(var(--bar-height) + 20px)
+    max(18px, calc(18px + var(--safe-right)))
+    calc(56px + var(--safe-bottom))
+    max(18px, calc(18px + var(--safe-left)));
+}
+
+.admin-badge {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+}
+
+.admin-login {
+  display: flex;
+  justify-content: center;
+  padding-top: 12vh;
+}
+.admin-login-form { display: flex; flex-direction: column; gap: 12px; }
+.admin-login-form .auth-sub { margin-bottom: 8px; }
+
+/* ---------------------------------------------------------- tabs */
+
+.admin-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 18px;
+  border-bottom: 1px solid var(--hairline);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.admin-tabs a {
+  flex-shrink: 0;
+  padding: 12px 12px 11px;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  margin-bottom: -1px;
+}
+.admin-tabs a:hover { color: var(--ink); }
+.admin-tabs a[aria-current="page"] {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+
+.admin-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+.admin-range { width: auto; }
+.admin-range .segment { flex: 0 0 auto; padding: 0 14px; }
+
+.admin-content { transition: opacity 0.15s; }
+.admin-content.refreshing { opacity: 0.55; }
+
+.admin-section-title {
+  margin: 28px 0 12px;
+  font: 400 13px/1.4 var(--ui);
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+.admin-section-title:first-child { margin-top: 0; }
+
+/* ---------------------------------------------------------- tiles */
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+}
+.kpi {
+  padding: 16px 18px 15px;
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+}
+.kpi-label {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+.kpi-value {
+  margin: 0;
+  font: 400 28px/1.15 var(--ui);
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.kpi-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+/* -------------------------------------------------- column charts */
+
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+}
+.chart {
+  padding: 16px 18px 12px;
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  min-width: 0;
+}
+.chart-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+.chart-title { margin: 0; font-size: 13px; color: var(--ink); }
+.chart-callout { margin-left: auto; font-size: 12px; color: var(--ink-soft); }
+
+.plot {
+  position: relative;
+  height: 120px;
+  margin-left: 34px;
+}
+.plot-grid {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px solid var(--viz-grid);
+}
+.plot-grid span {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: -7px;
+  font-size: 10.5px;
+  line-height: 1;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.plot-cols {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+}
+.plot-col {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  min-width: 0;
+  cursor: default;
+  outline: none;
+}
+.plot-col .plot-bar {
+  width: 100%;
+  max-width: 24px;
+  height: var(--h);
+  min-height: 0;
+  background: var(--viz-base);
+  border-radius: 4px 4px 0 0;
+}
+.plot-col.zero .plot-bar { height: 1px; border-radius: 0; opacity: 0.5; }
+.plot-col.emphasis .plot-bar { background: var(--viz-accent); }
+.plot-col:hover .plot-bar,
+.plot-col:focus-visible .plot-bar { filter: brightness(1.12); }
+.plot-col:focus-visible { box-shadow: inset 0 0 0 1px var(--seal); border-radius: 2px; }
+.plot-x {
+  display: flex;
+  justify-content: space-between;
+  margin: 8px 0 0 34px;
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart details { margin-top: 8px; }
+.chart summary {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+.chart summary:hover { color: var(--ink-soft); }
+.chart table { margin-top: 8px; font-size: 12px; }
+
+.admin-tooltip {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  padding: 8px 10px;
+  background: var(--paper);
+  border: 1px solid var(--card-line);
+  border-radius: 3px;
+  box-shadow: var(--sheet-shadow);
+  font-size: 12px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.admin-tooltip strong {
+  display: block;
+  font-weight: 400;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+/* -------------------------------------------------------- ranked */
+
+.ranks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+}
+.rank {
+  margin: 0;
+  padding: 14px 18px;
+  list-style: none;
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+}
+.rank h3 { margin: 0 0 10px; font: 400 13px/1.4 var(--ui); color: var(--ink); }
+.rank-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  padding: 6px 0;
+  font-size: 13px;
+}
+.rank-key {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+.rank-val {
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.rank-bar {
+  grid-column: 1 / -1;
+  height: 6px;
+  width: var(--w);
+  min-width: 2px;
+  background: var(--viz-base);
+  border-radius: 0 4px 4px 0;
+}
+
+/* --------------------------------------------------------- tables */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 0 0 12px;
+}
+.toolbar .search { margin: 0; flex: 1 1 240px; width: auto; }
+.toolbar select {
+  min-height: 38px;
+  padding: 0 10px;
+  font: 400 13px/1 var(--ui);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+}
+.toolbar a.link-button { display: inline-flex; align-items: center; text-decoration: none; }
+
+.table-wrap {
+  overflow-x: auto;
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+}
+.admin table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.admin th {
+  padding: 10px 14px;
+  font-weight: 400;
+  font-size: 12px;
+  text-align: left;
+  color: var(--ink-faint);
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+.admin td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink);
+  vertical-align: top;
+}
+.admin tr:last-child td { border-bottom: 0; }
+.admin td.num, .admin th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.admin td.muted { color: var(--ink-faint); white-space: nowrap; }
+.admin td.clip {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin tbody tr.clickable { cursor: pointer; }
+.admin tbody tr.clickable:hover td { background: color-mix(in srgb, var(--desk) 40%, var(--paper)); }
+
+.pill {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  border: 1px solid var(--card-line);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.pill.warn { color: var(--seal); border-color: color-mix(in srgb, var(--seal) 40%, transparent); }
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+.pager .link-button { min-height: 32px; }
+
+.empty-note { padding: 28px 14px; text-align: center; color: var(--ink-faint); font-size: 13px; }
+
+/* --------------------------------------------------------- detail */
+
+.detail {
+  padding: clamp(18px, 4vw, 28px);
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+}
+.detail-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 14px; margin: 0 0 6px; }
+.detail-title { margin: 0; font: 400 21px/1.4 var(--text); overflow-wrap: anywhere; }
+.detail-meta { margin: 0 0 18px; font-size: 12.5px; color: var(--ink-faint); overflow-wrap: anywhere; }
+.detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; }
+.detail-actions .danger { color: var(--seal); }
+.detail pre {
+  max-height: 420px;
+  overflow: auto;
+  margin: 0;
+  padding: 14px 16px;
+  font: 400 13px/1.75 var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: color-mix(in srgb, var(--desk) 45%, var(--paper));
+  border-radius: 3px;
+}
+.detail .meta-json {
+  font: 400 12px/1.6 ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--ink-soft);
+}
+.back-link {
+  display: inline-block;
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+.back-link:hover { color: var(--ink); }
+
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; margin: 0; font-size: 13px; }
+.kv dt { color: var(--ink-faint); }
+.kv dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+
+.config-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.config-row:last-child { border-bottom: 0; }
+.config-row .setting-label { flex: 1 1 260px; }
+.config-row .segmented { width: auto; }
+.config-row .segment { flex: 0 0 auto; padding: 0 14px; }
+.config-help { margin: 8px 0 0; font-size: 12.5px; line-height: 1.7; color: var(--ink-faint); }
+
+@media (max-width: 640px) {
+  .plot { margin-left: 30px; }
+  .plot-x { margin-left: 30px; }
+  .kpi-value { font-size: 24px; }
+  .admin-range .segment { padding: 0 10px; }
+}

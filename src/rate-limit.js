@@ -1,12 +1,14 @@
 const RL_ORIGIN = 'https://writer-rate-limit.local';
 
-export async function enforceRateLimit(request, { bucket, limit, windowMs, cache = caches.default, now = Date.now }) {
+// `identity` overrides the client IP, e.g. to throttle per email address.
+export async function enforceRateLimit(request, { bucket, limit, windowMs, identity, cache = caches.default, now = Date.now }) {
   if (!bucket || !Number.isFinite(limit) || limit <= 0 || !Number.isFinite(windowMs) || windowMs <= 0) {
     throw new Error('invalid rate limit config');
   }
 
   const nowMs = Number(now());
-  const key = makeCacheKey(clientIp(request), bucket);
+  const who = identity ? encodeURIComponent(String(identity)) : clientIp(request);
+  const key = makeCacheKey(who, bucket);
   const cacheKey = new Request(key);
   const state = (await readState(cache, cacheKey)) || freshState(nowMs, windowMs);
 
@@ -24,7 +26,22 @@ export async function enforceRateLimit(request, { bucket, limit, windowMs, cache
 
 function clientIp(request) {
   const ip = request.headers.get('CF-Connecting-IP');
-  return ip && ip.trim() ? ip.trim() : 'unknown';
+  return ip && ip.trim() ? limitKeyForIp(ip.trim()) : 'unknown';
+}
+
+// One IPv6 subscriber usually owns a whole /64, so throttle by that, not
+// by the full address (otherwise one /64 is an unlimited supply of keys).
+// IPv4, including IPv4-mapped IPv6, is used as is.
+export function limitKeyForIp(ip) {
+  const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mapped) return mapped[1];
+  if (!ip.includes(':')) return ip;
+  const [head, tail = ''] = ip.toLowerCase().split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const missing = Math.max(0, 8 - left.length - right.length);
+  const groups = [...left, ...Array(missing).fill('0'), ...right].slice(0, 4);
+  return `${groups.map((g) => g.replace(/^0+(?=.)/, '') || '0').join(':')}::/64`;
 }
 
 function makeCacheKey(ip, bucket) {

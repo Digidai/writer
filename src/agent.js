@@ -1,7 +1,8 @@
 // Archive plumbing: pipeline launch, the cron janitor, heuristic
 // fallbacks and Markdown file storage. The agent itself lives in
 // pipeline.js as a Cloudflare Workflow.
-import { readSettings } from './settings.js';
+import { readSettings, mergeUserSettings } from './settings.js';
+import { pruneCounters } from './site-config.js';
 
 // Claim a document and launch its archiving workflow. The status guard
 // makes this race-safe: whoever flips draft -> processing launches.
@@ -19,35 +20,89 @@ export async function launchPipeline(env, id, { reclaim = false } = {}) {
   return true;
 }
 
-// Cron janitor. Drafts left alone past the idle window are considered
-// finished, and 'processing' rows whose workflow died get relaunched, so
-// no document can stay stuck in 整理中 forever. The draft half honours
-// the instance setting; the stuck-pipeline half always runs.
-export async function sweepIdleDrafts(env) {
-  const settings = await readSettings(env);
-  // Give the editor's own idle timer a chance first, then sweep.
-  const idleMinutes = settings.idleArchiveMinutes ? settings.idleArchiveMinutes * 3 : 0;
-  const draftCutoff = idleMinutes
-    ? new Date(Date.now() - idleMinutes * 60 * 1000).toISOString()
-    : null;
-  const stuckCutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+// Cron janitor. Three jobs, each independent of the others:
+// 1. 'processing' rows whose workflow died get relaunched, so no document
+//    stays stuck in 整理中 forever (any owner).
+// 2. Signed-in writers' drafts left alone past their own idle window are
+//    filed (x3, so the editor's own idle timer gets the first chance).
+//    Anonymous drafts are never filed: archiving needs an account.
+// 3. Housekeeping: expired codes, sessions and counters, unclaimed
+//    anonymous documents after 14 days, analytics events after 180 days.
+const MAX_LAUNCHES = 5;
+const STUCK_MS = 15 * 60 * 1000;
+const MIN_IDLE_MS = 3 * 3 * 60 * 1000;
+const ANON_DRAFT_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+const GUESS_TTL_MS = 24 * 60 * 60 * 1000;
+const EVENT_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 
-  const { results } = await env.DB.prepare(
-    `SELECT id FROM documents
-      WHERE (? IS NOT NULL AND status = 'draft' AND updated_at < ? AND length(trim(content)) >= 2)
-         OR (status = 'processing' AND updated_at < ?)
-      ORDER BY updated_at
-      LIMIT 5`
+export async function sweepIdleDrafts(env, { now = Date.now() } = {}) {
+  const launch = [];
+
+  const stuck = await env.DB.prepare(
+    `SELECT id FROM documents WHERE status = 'processing' AND updated_at < ?
+      ORDER BY updated_at LIMIT ?`
   )
-    .bind(draftCutoff, draftCutoff, stuckCutoff)
+    .bind(new Date(now - STUCK_MS).toISOString(), MAX_LAUNCHES)
     .all();
+  for (const row of stuck.results || []) launch.push(row.id);
 
-  for (const row of results || []) {
-    try {
-      await launchPipeline(env, row.id, { reclaim: true });
-    } catch (err) {
-      console.error(`sweep: failed for ${row.id}`, err);
+  if (launch.length < MAX_LAUNCHES) {
+    const site = await readSettings(env);
+    const { results } = await env.DB.prepare(
+      `SELECT d.id, d.updated_at, u.settings
+         FROM documents d JOIN users u ON u.id = d.user_id
+        WHERE d.status = 'draft' AND u.status = 'active'
+          AND d.updated_at < ? AND length(trim(d.content)) >= 2
+        ORDER BY d.updated_at
+        LIMIT 25`
+    )
+      .bind(new Date(now - MIN_IDLE_MS).toISOString())
+      .all();
+    for (const row of results || []) {
+      if (launch.length >= MAX_LAUNCHES) break;
+      const minutes = mergeUserSettings(site, row).idleArchiveMinutes;
+      if (!minutes) continue; // this writer archives by hand only
+      if (Date.parse(row.updated_at) < now - minutes * 3 * 60 * 1000) launch.push(row.id);
     }
+  }
+
+  for (const id of launch) {
+    try {
+      await launchPipeline(env, id, { reclaim: true });
+    } catch (err) {
+      console.error(`sweep: failed for ${id}`, err);
+    }
+  }
+
+  await housekeeping(env, now);
+  return { launched: launch.length };
+}
+
+export async function housekeeping(env, now = Date.now()) {
+  const iso = new Date(now).toISOString();
+  const jobs = [
+    ['DELETE FROM login_codes WHERE expires_at < ?', iso],
+    ['DELETE FROM sessions WHERE expires_at < ?', iso],
+    ['DELETE FROM admin_sessions WHERE expires_at < ?', iso],
+    ['DELETE FROM login_guesses WHERE window_start < ?', new Date(now - GUESS_TTL_MS).toISOString()],
+    [
+      `DELETE FROM documents
+        WHERE user_id IS NULL AND anon_id IS NOT NULL AND status IN ('draft', 'deleted') AND updated_at < ?`,
+      new Date(now - ANON_DRAFT_TTL_MS).toISOString(),
+    ],
+    ['DELETE FROM events WHERE ts < ?', new Date(now - EVENT_TTL_MS).toISOString()],
+  ];
+  for (const [sql, cutoff] of jobs) {
+    try {
+      await env.DB.prepare(sql).bind(cutoff).run();
+    } catch (err) {
+      console.warn('housekeeping step failed', err && err.message);
+    }
+  }
+  try {
+    await pruneCounters(env, now);
+  } catch (err) {
+    console.warn('counter pruning failed', err && err.message);
   }
 }
 

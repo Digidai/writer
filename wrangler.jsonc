@@ -5,12 +5,21 @@
   "compatibility_date": "2026-08-01",
   "account_id": "48d9ccaf5ee7914c803b5d0656462848",
 
-  // Static assets: the editor (/) and the archive (/archive).
-  // Dynamic paths go through the Worker first.
+  // Static assets: the editor (/), archive, settings and sign-in pages.
+  // Dynamic paths (and the admin console) go through the Worker first.
   "assets": {
     "directory": "public",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*", "/d/*", "/unlock", "/mcp*"]
+    "run_worker_first": ["/api/*", "/d/*", "/unlock", "/mcp*", "/admin*"]
+  },
+
+  // Sign-in codes are sent with Cloudflare Email Service. The sending
+  // domain must be onboarded once in the dashboard (Compute > Email
+  // Service > Email Sending > Onboard Domain); `wrangler dev` only logs
+  // the message instead of sending it.
+  "send_email": [{ "name": "EMAIL" }],
+  "vars": {
+    "MAIL_FROM": "Writer <noreply@genedai.md>"
   },
 
   // Documents live in D1; archived files are mirrored to R2 as Markdown.

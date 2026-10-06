@@ -6,7 +6,7 @@
 <title>Settings · Writer</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/fonts/noto-sans-sc.css">
-<link rel="stylesheet" href="/style.css?v=0.12.2">
+<link rel="stylesheet" href="/style.css?v=0.13.0">
 <script>try{var s=JSON.parse(localStorage.getItem('writer.settings')||'{}');
 if(s.theme==='light'||s.theme==='dark')document.documentElement.dataset.theme=s.theme;
 if(s.fontSize)document.documentElement.dataset.size=s.fontSize;
@@ -31,8 +31,9 @@ document.documentElement.lang=l==='en'?'en':'zh-CN';}catch(e){}</script>
 <main class="settings">
   <div class="settings-sheet">
     <h1 class="page-title" data-i18n="settings.title">Settings</h1>
-    <p class="page-sub" data-i18n="settings.sub">These preferences live on your Writer instance, so they follow you to any device.</p>
+    <p class="page-sub" data-i18n="settings.sub">Preferences follow your account to any device.</p>
 
+    <section class="account setting-group" id="account" hidden></section>
     <div id="fields"></div>
 
     <section class="trash">
@@ -47,6 +48,6 @@ document.documentElement.lang=l==='en'?'en':'zh-CN';}catch(e){}</script>
 </main>
 
 <div class="toast" id="toast" hidden></div>
-<script type="module" src="/settings.js?v=0.12.2"></script>
+<script type="module" src="/settings.js?v=0.13.0"></script>
 </body>
 </html>

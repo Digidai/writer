@@ -140,10 +140,10 @@ def architecture(theme):
            anchor='end', font=MONO)
     cw = (IW - 3 * 20) // 4
     for i, (title, sub) in enumerate([
-        ('API 路由', '文档 CRUD · 检索'),
-        ('访问控制', '可选密钥 · 常量比较'),
-        ('Markdown SSR', '零依赖渲染器'),
-        ('Cron 认领', '每 10 分钟巡检'),
+        ('API 路由', '按账户隔离的文档'),
+        ('账户', '邮箱验证码 · 会话'),
+        ('后台 /admin', '统计 · 用户 · 文档'),
+        ('Cron 巡检', '归档 · 重启 · 清理'),
     ]):
         box(s, IX + i * (cw + 20), 272, cw, 68, title, sub)
 
@@ -184,7 +184,7 @@ def agent(theme):
     s = Svg(980, 760, t)
 
     # What starts a run
-    for i, label in enumerate(['点击「完成」 / ⌘⏎', '静置 5 分钟', 'Cron 认领遗留草稿']):
+    for i, label in enumerate(['点击「完成」 / ⌘⏎', '静置自动归档', 'Cron 认领遗留草稿']):
         x = 110 + i * 260
         s.rect(x, 30, 230, 46, fill=t['chip'], stroke=t['line'], rx=23)
         s.text(x + 115, 58, label, size=13, fill=t['soft'], anchor='middle')
