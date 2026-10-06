@@ -99,9 +99,11 @@ export async function housekeeping(env, now = Date.now()) {
         WHERE user_id IS NULL AND anon_id IS NOT NULL AND status IN ('draft', 'deleted') AND updated_at < ?`,
       new Date(now - ANON_DRAFT_TTL_MS).toISOString(),
     ],
-    ['DELETE FROM events WHERE ts < ?', new Date(now - EVENT_TTL_MS).toISOString()],
-    ['DELETE FROM pageviews WHERE ts < ?', new Date(now - EVENT_TTL_MS).toISOString()],
-    ['DELETE FROM ai_calls WHERE ts < ?', new Date(now - EVENT_TTL_MS).toISOString()],
+    // By day, so each run reads only the expired rows (through the day
+    // indexes) instead of scanning the tables every ten minutes.
+    ['DELETE FROM events WHERE day < ?', new Date(now - EVENT_TTL_MS).toISOString().slice(0, 10)],
+    ['DELETE FROM pageviews WHERE day < ?', new Date(now - EVENT_TTL_MS).toISOString().slice(0, 10)],
+    ['DELETE FROM ai_calls WHERE day < ?', new Date(now - EVENT_TTL_MS).toISOString().slice(0, 10)],
     ['DELETE FROM writing_days WHERE day < ?', new Date(now - EVENT_TTL_MS).toISOString().slice(0, 10)],
   ];
   for (const [sql, cutoff] of jobs) {

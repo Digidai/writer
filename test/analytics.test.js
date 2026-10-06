@@ -152,20 +152,92 @@ test('bots, admin pages and unknown event types are not recorded', async () => {
   assert.equal(world.DB.get('SELECT COUNT(*) AS n FROM events').n, 0);
 });
 
-test('page views are never tied to an account; product events are', async () => {
+test('page views are never tied to an account; product events are, without a visitor hash', async () => {
   const world = createEnv();
   const member = browser(worker, world, { ip: '203.0.113.40' });
   await signIn(member, world.outbox, 'reader@example.com');
-  await view(world, member, { path: '/archive' });
+  await view(world, member, { view: VIEW, path: '/archive' });
   for (const type of ['completion_shown', 'completion_accept', 'completion_dismiss']) {
-    await member.request('/api/signal', { method: 'POST', body: { type, path: '/' } });
+    await signal(world, member, { type, view: VIEW, path: '/' });
   }
-  await world.settle();
   const columns = world.DB.all('PRAGMA table_info(pageviews)').map((c) => c.name);
   assert.equal(columns.includes('user_id'), false);
   const events = world.DB.all(`SELECT type, user_id, visitor FROM events WHERE type LIKE 'completion_%' ORDER BY id`);
   assert.deepEqual(events.map((e) => e.type), ['completion_shown', 'completion_accept', 'completion_dismiss']);
-  assert.ok(events.every((e) => e.user_id && /^[0-9a-f]{20}$/.test(e.visitor)));
+  // Nothing to join a member's page views to their account with.
+  assert.ok(events.every((e) => e.user_id && e.visitor === null));
+  const linked = world.DB.all('SELECT visitor FROM events WHERE user_id IS NOT NULL OR doc_id IS NOT NULL');
+  assert.ok(linked.length > 0 && linked.every((e) => e.visitor === null));
+});
+
+test('page view and event hashes cannot be joined, even for anonymous visitors', async () => {
+  const world = createEnv();
+  const visitor = browser(worker, world);
+  await view(world, visitor, { view: VIEW });
+  await signal(world, visitor, { type: 'auth_prompt', view: VIEW, reason: 'finish' });
+  const pv = world.DB.get('SELECT visitor FROM pageviews').visitor;
+  const ev = world.DB.get(`SELECT visitor FROM events WHERE type = 'auth_prompt'`).visitor;
+  assert.match(ev, /^[0-9a-f]{20}$/);
+  assert.notEqual(pv, ev);
+});
+
+test('a view id belongs to the visitor who recorded it', async () => {
+  const world = createEnv();
+  const owner = browser(worker, world, { ip: '203.0.113.60' });
+  const other = browser(worker, world, { ip: '198.51.100.61' });
+  await view(world, owner, { view: VIEW });
+  // The same id again, from someone else: ignored, not a second row.
+  await view(world, other, { view: VIEW, path: '/archive' });
+  assert.equal(world.DB.get('SELECT COUNT(*) AS n FROM pageviews').n, 1);
+  // Someone else cannot report on it either.
+  await signal(world, other, { type: 'engage', view: VIEW, ms: 21_600_000, vitals: { lcp: 120_000 } });
+  assert.deepEqual({ ...world.DB.get('SELECT engaged_ms, lcp FROM pageviews') }, { engaged_ms: null, lcp: null });
+  await signal(world, owner, { type: 'engage', view: VIEW, ms: 5000, vitals: { lcp: 900 } });
+  assert.deepEqual({ ...world.DB.get('SELECT engaged_ms, lcp FROM pageviews') }, { engaged_ms: 5000, lcp: 900 });
+});
+
+test('product events from the page need a view the server recorded', async () => {
+  const world = createEnv();
+  const visitor = browser(worker, world);
+  await signal(world, visitor, { type: 'completion_accept', view: VIEW });
+  await signal(world, visitor, { type: 'completion_accept' });
+  assert.equal(world.DB.get('SELECT COUNT(*) AS n FROM events').n, 0);
+  await view(world, visitor, { view: VIEW });
+  await signal(world, visitor, { type: 'completion_accept', view: VIEW });
+  assert.equal(world.DB.get('SELECT COUNT(*) AS n FROM events').n, 1);
+});
+
+test('one address can only start so many sessions an hour', async () => {
+  const world = createEnv();
+  for (let i = 0; i < 65; i++) {
+    // A new user agent is a new visitor, and so a new session.
+    await view(world, browser(worker, world, { ip: '203.0.113.70', ua: `${CHROME_MAC} Fake/${i}` }), {});
+  }
+  assert.equal(world.DB.get('SELECT COUNT(*) AS n FROM pageviews').n, 60);
+});
+
+test('a long visit on one page is still one visit', async () => {
+  const world = createEnv();
+  const writer = browser(worker, world);
+  await view(world, writer, { view: VIEW });
+  // Forty minutes of writing on the editor, reported when the page is left.
+  world.DB.raw.prepare(`UPDATE pageviews SET ts = ?`).run(new Date(Date.now() - 45 * 60 * 1000).toISOString());
+  await signal(world, writer, { type: 'engage', view: VIEW, ms: 40 * 60 * 1000 });
+  await view(world, writer, { path: '/archive' });
+  const rows = world.DB.all('SELECT session, entry FROM pageviews ORDER BY id');
+  assert.equal(rows[0].session, rows[1].session);
+  assert.equal(rows[1].entry, 0);
+});
+
+test('event details are always valid JSON, and campaign tags never keep an email', async () => {
+  const world = createEnv();
+  const visitor = browser(worker, world);
+  await signal(world, visitor, { type: 'client_error', message: '\u0001'.repeat(300), source: 'https://writer.example/app.js' });
+  const meta = world.DB.get(`SELECT meta FROM events WHERE type = 'client_error'`).meta;
+  assert.doesNotThrow(() => JSON.parse(meta));
+  await view(world, visitor, { utm: { source: 'jane@example.com', campaign: 'weekly' } });
+  const row = world.DB.get('SELECT utm_source, utm_campaign FROM pageviews');
+  assert.deepEqual({ ...row }, { utm_source: null, utm_campaign: 'weekly' });
 });
 
 test('visitor hashes depend on the analytics secret', async () => {
@@ -201,9 +273,9 @@ test('browser errors keep no URLs and are capped per address', async () => {
 test('sign-in prompts keep only a known reason', async () => {
   const world = createEnv();
   const visitor = browser(worker, world);
-  await visitor.request('/api/signal', { method: 'POST', body: { type: 'auth_prompt', reason: 'finish' } });
-  await visitor.request('/api/signal', { method: 'POST', body: { type: 'auth_prompt', reason: '<script>' } });
-  await world.settle();
+  await view(world, visitor, { view: VIEW });
+  await signal(world, visitor, { type: 'auth_prompt', view: VIEW, reason: 'finish' });
+  await signal(world, visitor, { type: 'auth_prompt', view: VIEW, reason: '<script>' });
   assert.deepEqual(world.DB.all(`SELECT meta FROM events ORDER BY id`).map((r) => JSON.parse(r.meta).reason), ['finish', 'signin']);
 });
 
@@ -222,7 +294,9 @@ test('every save counts toward the day it happened, once per document', async ()
   assert.equal(row.saves, 3);
   assert.equal(row.chars, 'One line. Two. Three.'.length);
   assert.equal(row.user_id, null);
-  assert.match(row.visitor, /^[0-9a-f]{20}$/);
+  assert.equal(row.anon, 1);
+  // No visitor hash next to a document: a draft cannot link visits.
+  assert.equal('visitor' in row, false);
 
   // Signing in claims the draft; the next save puts the day on the account.
   const verified = await signIn(writer, world.outbox, 'claims@example.com');
@@ -230,6 +304,7 @@ test('every save counts toward the day it happened, once per document', async ()
   await world.settle();
   row = world.DB.get('SELECT * FROM writing_days');
   assert.equal(row.user_id, verified.body.user.id);
+  assert.equal(row.anon, 1, 'written anonymously that day, still counted as such');
   assert.equal(row.saves, 4);
 });
 
@@ -247,6 +322,7 @@ test('the funnel sees the sign-in wall and who got past it', async () => {
   const types = world.DB.all('SELECT type, doc_id, visitor FROM events ORDER BY id');
   assert.deepEqual(types.map((e) => e.type), ['doc_create', 'finalize_blocked', 'auth_code_sent', 'signup', 'finalize']);
   assert.ok(types.filter((e) => e.type !== 'auth_code_sent' && e.type !== 'signup').every((e) => e.doc_id === created.body.id));
-  assert.ok(types.every((e) => /^[0-9a-f]{20}$/.test(e.visitor)));
+  // Only the event with neither an account nor a document carries a hash.
+  assert.deepEqual(types.map((e) => Boolean(e.visitor)), [false, false, true, false, false]);
   assert.equal(world.workflows[0].params.trigger, 'manual');
 });

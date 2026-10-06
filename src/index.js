@@ -44,7 +44,7 @@ export default {
     const { pathname } = url;
 
     if (/^\/mcp\/?$/.test(pathname)) {
-      return handleMcpRequest(request, env);
+      return handleMcpRequest(request, env, ctx);
     }
 
     // The admin console has its own password and sits outside the
@@ -192,7 +192,7 @@ async function handleApi(request, env, ctx, url, viewer) {
     }
     if (sub === 'restore' && method === 'POST') {
       if (!viewer.user) return authRequired();
-      const res = await restoreDocument(env, id, viewer);
+      const res = await restoreDocument(env, id, viewer, ctx);
       if (res.ok) track(env, ctx, { type: 'restore', request, userId: viewer.user.id, docId: id });
       return res;
     }
@@ -308,7 +308,7 @@ async function deleteDocument(request, env, ctx, id, url, viewer) {
 async function searchDocuments(request, env, ctx, url, viewer) {
   if (!viewer.user) return authRequired();
   const started = Date.now();
-  const data = await searchDocumentsData(env, url, { mapDoc: (row) => publicDoc(row), limit: 50, viewer });
+  const data = await searchDocumentsData(env, url, { mapDoc: (row) => publicDoc(row), limit: 50, viewer, ctx });
   if (data.query) {
     track(env, ctx, {
       type: 'search',
@@ -487,7 +487,7 @@ function throttle(request, env, ctx, opts) {
 }
 
 function noteWriting(env, ctx, request, viewer, docId, chars) {
-  const pending = recordWriting(env, request, { docId, userId: viewer.user ? viewer.user.id : null, chars });
+  const pending = recordWriting(env, { docId, userId: viewer.user ? viewer.user.id : null, chars });
   if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(pending);
 }
 

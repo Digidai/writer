@@ -207,16 +207,19 @@ test('product: the funnel, writers, cohorts, suggestions, the agent, search and 
   event(DB, { type: 'rate_limited', meta: { bucket: 'complete' } });
   aiCall(DB, { feature: 'completion' });
   aiCall(DB, { feature: 'completion', status: 'empty' });
-  DB.raw.prepare(`INSERT INTO writing_days (day, doc_id, user_id, visitor, saves, chars) VALUES (?, ?, ?, NULL, 5, 300)`).run(today, D1, U1);
-  DB.raw.prepare(`INSERT INTO writing_days (day, doc_id, user_id, visitor, saves, chars) VALUES (?, 'doc-old', ?, NULL, 2, 100)`).run(daysAgo(14), U2);
-  DB.raw.prepare(`INSERT INTO writing_days (day, doc_id, user_id, visitor, saves, chars) VALUES (?, 'doc-anon', NULL, 'v2', 3, 50)`).run(today);
+  DB.raw.prepare(`INSERT INTO writing_days (day, doc_id, user_id, anon, saves, chars) VALUES (?, ?, ?, 1, 5, 300)`).run(today, D1, U1);
+  DB.raw.prepare(`INSERT INTO writing_days (day, doc_id, user_id, anon, saves, chars) VALUES (?, 'doc-old', ?, 0, 2, 100)`).run(daysAgo(14), U2);
+  DB.raw.prepare(`INSERT INTO writing_days (day, doc_id, user_id, anon, saves, chars) VALUES (?, 'doc-anon', NULL, 1, 3, 50)`).run(today);
   const client = await admin(world);
 
   const d = (await client.json('/api/admin/product?days=7')).body;
+  // Anonymous drafts written in the range (D1 before it was claimed, and
+  // doc-anon), then drafts that hit the sign-in wall.
   assert.deepEqual(d.funnel.map((s) => [s.step, s.value]), [
     ['visitors', 4], ['anonWriters', 2], ['signInWall', 1], ['codeSent', 1], ['signups', 1], ['firstArchive', 1],
   ]);
   assert.equal(d.funnel[1].ofPrevious, 0.5);
+  assert.equal(d.funnel[2].ofPrevious, 0.5);
   assert.equal(d.writers.total, 2);
   assert.equal(d.writers.members, 1);
   assert.equal(d.writers.newMembers, 1);
@@ -311,14 +314,22 @@ test('the overview adds traffic, accounts, writing, models and health together',
   event(DB, { type: 'server_error', path: '/api/x' });
   aiCall(DB, { neurons: 500 });
   const client = await admin(world);
+  // Moved over from 0.13: counted as a view, left out of the session numbers.
+  pageview(DB, { visitor: 'old', session: 'legacy-7', entry: 1 });
+  // One page, used for a minute: a visit, not a bounce.
+  pageview(DB, { visitor: 'y', session: 'y', entry: 1, engaged_ms: 60_000 });
   const o = (await client.json('/api/admin/overview?days=7')).body;
-  assert.equal(o.traffic.pageviews, 1);
-  assert.equal(o.traffic.bounceRate, 1);
+  assert.equal(o.traffic.pageviews, 3);
+  assert.equal(o.traffic.sessions, 2);
+  assert.equal(o.traffic.bounceRate, 0.5);
   assert.equal(o.ai.calls, 1);
   assert.ok(Math.abs(o.daily[6].usd - 500 * 0.000011) < 1e-12);
   assert.equal(o.health.serverErrors, 1);
-  assert.equal(o.system.rows.pageviews, 1);
   assert.equal(o.system.analyticsSecret, false);
+  assert.equal(o.system.rows, undefined, 'row counts live on the settings page');
+  const config = (await client.json('/api/admin/config')).body;
+  assert.equal(config.rows.pageviews, 3);
+  assert.equal(config.rows.ai_calls, 1);
 });
 
 test("Cloudflare's own usage numbers, when a token is configured", async () => {

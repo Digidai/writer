@@ -195,17 +195,30 @@ export async function overview(env, range, now = Date.now()) {
     count(env, 'SELECT COUNT(*) AS n FROM documents WHERE user_id IS NULL AND anon_id IS NOT NULL'),
     count(env, 'SELECT COUNT(*) AS n FROM documents WHERE user_id IS NULL AND anon_id IS NULL'),
     count(env, `SELECT COUNT(*) AS n FROM documents WHERE status = 'processing' AND updated_at < ?`, nowIso(now - STUCK_MS)),
-    systemInfo(env),
+    systemInfo(env, { rows: false }),
   ]);
   const documents = { draft: 0, processing: 0, archived: 0, deleted: 0 };
   for (const row of byStatus.results || []) documents[row.status] = Number(row.n) || 0;
   return { ...report, writing: { ...report.writing, anonDrafts, legacy, stuck, documents }, system };
 }
 
-const STORAGE_TABLES = ['documents', 'users', 'sessions', 'events', 'pageviews', 'ai_calls', 'writing_days'];
+// Row counts for the settings page. The append-only tables are estimated
+// from their id range (two index lookups) instead of counted row by row:
+// D1 bills every row a COUNT(*) reads.
+const COUNTED_TABLES = ['documents', 'users', 'sessions', 'writing_days'];
+const ESTIMATED_TABLES = ['events', 'pageviews', 'ai_calls'];
 
-async function systemInfo(env) {
-  const rows = await Promise.all(STORAGE_TABLES.map((t) => count(env, `SELECT COUNT(*) AS n FROM ${t}`).catch(() => 0)));
+async function tableRows(env) {
+  const counted = await Promise.all(COUNTED_TABLES.map((t) => count(env, `SELECT COUNT(*) AS n FROM ${t}`).catch(() => 0)));
+  const estimated = await Promise.all(ESTIMATED_TABLES.map((t) =>
+    count(env, `SELECT COALESCE(MAX(id) - MIN(id) + 1, 0) AS n FROM ${t}`).catch(() => 0)));
+  return Object.fromEntries([
+    ...COUNTED_TABLES.map((t, i) => [t, counted[i]]),
+    ...ESTIMATED_TABLES.map((t, i) => [t, estimated[i]]),
+  ]);
+}
+
+async function systemInfo(env, { rows = true } = {}) {
   return {
     version: WRITER_VERSION,
     email: emailConfigured(env),
@@ -214,7 +227,7 @@ async function systemInfo(env) {
     siteLock: Boolean(env.WRITER_ACCESS_KEY),
     analyticsSecret: Boolean(env.ANALYTICS_SECRET),
     cloudflareAnalytics: Boolean(env.CF_ANALYTICS_TOKEN && env.CF_ACCOUNT_ID),
-    rows: Object.fromEntries(STORAGE_TABLES.map((t, i) => [t, rows[i]])),
+    ...(rows ? { rows: await tableRows(env) } : {}),
   };
 }
 
@@ -423,7 +436,7 @@ async function documentAction(request, env, ctx, id, action, now) {
     await env.DB.prepare('UPDATE documents SET user_id = ?, anon_id = NULL WHERE id = ?').bind(user.id, id).run();
     if (row.status === 'archived') {
       const doc = await env.DB.prepare('SELECT * FROM documents WHERE id = ?').bind(id).first();
-      if (doc) await upsertDocumentVector(env, doc);
+      if (doc) await upsertDocumentVector(env, doc, { ctx });
     }
     audit(env, ctx, 'doc_assign', id, { to: user.id });
     return json({ ok: true, user_id: user.id });

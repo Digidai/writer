@@ -26,12 +26,14 @@ function randomId() {
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Product events from the page (suggestion shown, accepted, sign-in asked).
-export function track(type, extra = {}) {
-  send({ type, path: location.pathname, ...extra });
-}
-
 const view = { id: randomId(), engaged: 0, lastTick: 0, lastInput: 0, scroll: 0, vitals: {} };
+
+// Product events from the page (suggestion shown, accepted, sign-in asked).
+// They carry this view's id: the server counts them only for a view it
+// recorded for the same visitor.
+export function track(type, extra = {}) {
+  send({ type, view: view.id, path: location.pathname, ...extra });
+}
 
 function campaign() {
   const p = new URLSearchParams(location.search);
@@ -156,23 +158,31 @@ observe('layout-shift', (entries) => {
   view.vitals.cls = Math.round(clsWorst * 1000);
 });
 
-// Keep the ten slowest interactions and a count: one in fifty is ignored.
-const slowest = [];
+// INP: the slowest interaction, ignoring one in fifty. Each interaction is
+// its longest entry. Only the slowest ten can ever be reported, so the rest
+// are forgotten once there are many. Interactions under 16 ms are not
+// reported by the browser, so the first input always counts as well
+// (otherwise a fast page would have no INP at all).
+const durations = new Map();
 let interactions = 0;
+function addInteraction(id, duration) {
+  if (!durations.has(id)) interactions += 1;
+  durations.set(id, Math.max(durations.get(id) || 0, duration));
+  let worst = [...durations.values()].sort((a, b) => b - a);
+  if (durations.size > 200) {
+    const keep = [...durations.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+    durations.clear();
+    for (const [k, v] of keep) durations.set(k, v);
+    worst = keep.map(([, v]) => v);
+  }
+  view.vitals.inp = Math.round(worst[Math.min(worst.length - 1, Math.floor(interactions / 50))]);
+}
+observe('first-input', (entries) => {
+  for (const e of entries) addInteraction(e.interactionId || 'first', e.duration);
+});
 observe('event', (entries) => {
-  const batch = new Map();
-  for (const e of entries) {
-    if (!e.interactionId) continue;
-    batch.set(e.interactionId, Math.max(batch.get(e.interactionId) || 0, e.duration));
-  }
-  for (const duration of batch.values()) {
-    interactions += 1;
-    slowest.push(duration);
-    slowest.sort((a, b) => b - a);
-    if (slowest.length > 10) slowest.pop();
-  }
-  if (slowest.length) view.vitals.inp = Math.round(slowest[Math.min(slowest.length - 1, Math.floor(interactions / 50))]);
-}, { durationThreshold: 40 });
+  for (const e of entries) if (e.interactionId) addInteraction(e.interactionId, e.duration);
+}, { durationThreshold: 16 });
 
 // ---------------------------------------------------------------- errors
 // Our own scripts only (not extensions), a few per page, no stack traces.

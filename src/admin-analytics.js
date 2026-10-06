@@ -71,6 +71,12 @@ function usd(neurons) {
   return n(neurons) * USD_PER_NEURON;
 }
 
+// json_extract on a row that is not valid JSON aborts the whole query;
+// read through json_valid so one bad row can never break a report.
+function jx(path) {
+  return `json_extract(CASE WHEN json_valid(meta) THEN meta END, '${path}')`;
+}
+
 function safeJson(raw) {
   if (raw === null || raw === undefined) return null;
   try {
@@ -148,6 +154,13 @@ function vitalsSummary(rows) {
   return out;
 }
 
+// Sessions moved over from before 0.14 have no real boundaries.
+const REAL_SESSION = `session NOT LIKE 'legacy-%'`;
+// A bounce: one page and under ten seconds of use. One long page (the
+// editor) used for twenty minutes is not a bounce.
+const BOUNCE_MS = 10_000;
+const BOUNCE = `CASE WHEN views = 1 AND engaged < ${BOUNCE_MS} THEN 1 ELSE 0 END`;
+
 export async function trafficReport(env, range, q) {
   const w = trafficWhere(range, q);
   const wp = trafficWhere(range, q, 'p.');
@@ -168,9 +181,10 @@ export async function trafficReport(env, range, q) {
     one(env, `WITH s AS (
                 SELECT session, COUNT(*) AS views, SUM(COALESCE(engaged_ms, 0)) AS engaged
                   FROM pageviews
-                 WHERE day >= ? AND day <= ? AND session IN (SELECT DISTINCT session FROM pageviews WHERE ${w.sql})
+                 WHERE day >= ? AND day <= ? AND ${REAL_SESSION}
+                   AND session IN (SELECT DISTINCT session FROM pageviews WHERE ${w.sql})
                  GROUP BY session)
-              SELECT COUNT(*) AS sessions, SUM(CASE WHEN views = 1 THEN 1 ELSE 0 END) AS bounces,
+              SELECT COUNT(*) AS sessions, SUM(${BOUNCE}) AS bounces,
                      AVG(views) AS viewsPerSession, AVG(engaged) AS engagedPerSession FROM s`,
     [range.since, range.until, ...w.binds]),
     all(env, `SELECT day, COUNT(*) AS pageviews, COUNT(DISTINCT visitor) AS visitors, COUNT(DISTINCT session) AS sessions
@@ -187,8 +201,11 @@ export async function trafficReport(env, range, q) {
     top('os'),
     top('lang'),
     top('viewport'),
-    all(env, `WITH s AS (SELECT session, COUNT(*) AS views FROM pageviews WHERE day >= ? AND day <= ? GROUP BY session)
-              SELECT p.path AS key, COUNT(*) AS sessions, SUM(CASE WHEN s.views = 1 THEN 1 ELSE 0 END) AS bounces
+    all(env, `WITH s AS (
+                SELECT session, COUNT(*) AS views, SUM(COALESCE(engaged_ms, 0)) AS engaged
+                  FROM pageviews WHERE day >= ? AND day <= ? AND ${REAL_SESSION} GROUP BY session)
+              SELECT p.path AS key, COUNT(*) AS sessions,
+                     SUM(CASE WHEN s.views = 1 AND s.engaged < ${BOUNCE_MS} THEN 1 ELSE 0 END) AS bounces
                 FROM pageviews p JOIN s ON s.session = p.session
                WHERE p.entry = 1 AND ${wp.sql}
                GROUP BY p.path ORDER BY sessions DESC LIMIT 20`, [range.since, range.until, ...wp.binds]),
@@ -276,9 +293,10 @@ export async function pageviewLog(env, range, q) {
 
 // --------------------------------------------------------------- product
 
-// One person per step: an account when there is one, otherwise the daily
-// visitor hash. Steps of the anonymous-first funnel, in order.
-const PERSON = `COALESCE(user_id, day || ':' || visitor)`;
+// One person per step: an account when there is one, else the anonymous
+// draft, else the daily visitor hash (events that point at an account or a
+// document carry none).
+const PERSON = `COALESCE(user_id, 'd:' || doc_id, day || ':' || visitor)`;
 
 async function weeklyCohorts(env, until) {
   // Eight weeks ending with `until`'s week (weeks start on Monday, UTC).
@@ -331,17 +349,17 @@ export async function productReport(env, range) {
     emailDaily, cohorts,
   ] = await Promise.all([
     one(env, `SELECT COUNT(DISTINCT day || ':' || visitor) AS people FROM pageviews WHERE ${inRange}`, r),
-    distinct('doc_create', ` AND user_id IS NULL`),
-    distinct('finalize_blocked'),
-    distinct('auth_code_sent', ` AND json_extract(meta, '$.newAccount') = 1`),
+    one(env, `SELECT COUNT(DISTINCT doc_id) AS people FROM writing_days WHERE anon = 1 AND ${inRange}`, r),
+    one(env, `SELECT COUNT(DISTINCT doc_id) AS people FROM events WHERE type = 'finalize_blocked' AND ${inRange}`, r),
+    distinct('auth_code_sent', ` AND ${jx('$.newAccount')} = 1`),
     distinct('signup'),
     one(env, `SELECT COUNT(DISTINCT e.user_id) AS people FROM events e JOIN users u ON u.id = e.user_id
                WHERE e.type = 'archived' AND e.day >= ? AND e.day <= ? AND u.created_at >= ?`,
     [...r, `${range.since}T00:00:00.000Z`]),
-    all(env, `SELECT day, COUNT(DISTINCT COALESCE(user_id, 'v:' || visitor)) AS writers,
+    all(env, `SELECT day, COUNT(DISTINCT COALESCE(user_id, 'd:' || doc_id)) AS writers,
                      COUNT(DISTINCT user_id) AS members, SUM(saves) AS saves, COUNT(*) AS docs
                 FROM writing_days WHERE ${inRange} GROUP BY day`, r),
-    one(env, `SELECT COUNT(DISTINCT COALESCE(user_id, 'v:' || day || visitor)) AS writers, COUNT(DISTINCT user_id) AS members,
+    one(env, `SELECT COUNT(DISTINCT COALESCE(user_id, 'd:' || doc_id)) AS writers, COUNT(DISTINCT user_id) AS members,
                      SUM(saves) AS saves, COUNT(DISTINCT doc_id) AS docs, SUM(chars) AS chars
                 FROM writing_days WHERE ${inRange}`, r),
     activeSince(1),
@@ -354,30 +372,31 @@ export async function productReport(env, range) {
     one(env, `SELECT COUNT(*) AS calls, SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) AS ok,
                      SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors
                 FROM ai_calls WHERE feature = 'completion' AND ${inRange}`, r),
-    one(env, `SELECT COUNT(*) AS runs, AVG(json_extract(meta, '$.turns')) AS turns, AVG(value) AS duration,
-                     SUM(CASE WHEN json_extract(meta, '$.fallback') = 1 THEN 1 ELSE 0 END) AS fallback,
-                     SUM(CASE WHEN json_extract(meta, '$.heuristic') = 1 THEN 1 ELSE 0 END) AS heuristic,
-                     SUM(CASE WHEN json_extract(meta, '$.formatted') = 1 THEN 1 ELSE 0 END) AS formatted
+    one(env, `SELECT COUNT(*) AS runs, AVG(${jx('$.turns')}) AS turns, AVG(value) AS duration,
+                     SUM(CASE WHEN ${jx('$.fallback')} = 1 THEN 1 ELSE 0 END) AS fallback,
+                     SUM(CASE WHEN ${jx('$.heuristic')} = 1 THEN 1 ELSE 0 END) AS heuristic,
+                     SUM(CASE WHEN ${jx('$.formatted')} = 1 THEN 1 ELSE 0 END) AS formatted
                 FROM events WHERE type = 'archived' AND ${inRange}`, r),
-    all(env, `SELECT json_extract(meta, '$.category') AS key, COUNT(*) AS n FROM events
+    all(env, `SELECT ${jx('$.category')} AS key, COUNT(*) AS n FROM events
                WHERE type = 'archived' AND ${inRange} GROUP BY key ORDER BY n DESC LIMIT 12`, r),
-    all(env, `SELECT COALESCE(json_extract(meta, '$.trigger'), 'manual') AS key, COUNT(*) AS n FROM events
+    all(env, `SELECT COALESCE(${jx('$.trigger')}, 'manual') AS key, COUNT(*) AS n FROM events
                WHERE type = 'archived' AND ${inRange} GROUP BY key ORDER BY n DESC`, r),
     one(env, `SELECT COUNT(*) AS n, AVG(value) AS results, SUM(CASE WHEN value = 0 THEN 1 ELSE 0 END) AS empty,
-                     AVG(json_extract(meta, '$.ms')) AS ms,
-                     SUM(CASE WHEN json_extract(meta, '$.mode') = 'semantic' THEN 1 ELSE 0 END) AS semantic
+                     AVG(${jx('$.ms')}) AS ms,
+                     SUM(CASE WHEN ${jx('$.mode')} = 'semantic' THEN 1 ELSE 0 END) AS semantic
                 FROM events WHERE type = 'search' AND ${inRange}`, r),
-    all(env, `SELECT j.value AS key, COUNT(*) AS n FROM events, json_each(events.meta, '$.keys') AS j
+    all(env, `SELECT j.value AS key, COUNT(*) AS n
+                FROM events, json_each(CASE WHEN json_valid(events.meta) THEN events.meta ELSE '{}' END, '$.keys') AS j
                WHERE events.type = 'settings_change' AND events.day >= ? AND events.day <= ?
                GROUP BY j.value ORDER BY n DESC`, r),
     all(env, `SELECT type, COALESCE(path, '') AS key, COUNT(*) AS n, MAX(ts) AS last FROM events
                WHERE type = 'server_error' AND ${inRange} GROUP BY type, key ORDER BY n DESC LIMIT 12`, r),
-    all(env, `SELECT json_extract(meta, '$.message') AS key, json_extract(meta, '$.source') AS source, COUNT(*) AS n,
+    all(env, `SELECT ${jx('$.message')} AS key, ${jx('$.source')} AS source, COUNT(*) AS n,
                      MAX(ts) AS last
                 FROM events WHERE type = 'client_error' AND ${inRange} GROUP BY key, source ORDER BY n DESC LIMIT 12`, r),
     all(env, `SELECT COALESCE(path, '') AS key, COUNT(*) AS n FROM events
                WHERE type = 'not_found' AND ${inRange} GROUP BY key ORDER BY n DESC LIMIT 12`, r),
-    all(env, `SELECT json_extract(meta, '$.bucket') AS key, COUNT(*) AS n FROM events
+    all(env, `SELECT ${jx('$.bucket')} AS key, COUNT(*) AS n FROM events
                WHERE type = 'rate_limited' AND ${inRange} GROUP BY key ORDER BY n DESC`, r),
     all(env, `SELECT day, SUM(CASE WHEN type = 'auth_code_sent' THEN 1 ELSE 0 END) AS sent,
                      SUM(CASE WHEN type = 'auth_email_failed' THEN 1 ELSE 0 END) AS failed
@@ -813,12 +832,13 @@ export async function overviewReport(env, range, now = Date.now()) {
   const [traffic, sessionStats, events, ai, runs, users, activeWriters, daily, dailyEvents, dailyAi] = await Promise.all([
     one(env, `SELECT COUNT(*) AS pageviews, COUNT(DISTINCT day || ':' || visitor) AS visitors, COUNT(DISTINCT session) AS sessions
                 FROM pageviews WHERE ${inRange}`, r),
-    one(env, `SELECT COUNT(*) AS sessions, SUM(CASE WHEN views = 1 THEN 1 ELSE 0 END) AS bounces
-                FROM (SELECT session, COUNT(*) AS views FROM pageviews WHERE ${inRange} GROUP BY session)`, r),
+    one(env, `SELECT COUNT(*) AS sessions, SUM(${BOUNCE}) AS bounces
+                FROM (SELECT session, COUNT(*) AS views, SUM(COALESCE(engaged_ms, 0)) AS engaged
+                        FROM pageviews WHERE ${inRange} AND ${REAL_SESSION} GROUP BY session)`, r),
     all(env, `SELECT type, COUNT(*) AS n FROM events WHERE ${inRange} GROUP BY type`, r),
     one(env, `SELECT ${SUMS} FROM ai_calls WHERE ${inRange}`, r),
-    one(env, `SELECT SUM(CASE WHEN json_extract(meta, '$.fallback') = 1 THEN 1 ELSE 0 END) AS fallback,
-                     SUM(CASE WHEN json_extract(meta, '$.heuristic') = 1 THEN 1 ELSE 0 END) AS heuristic
+    one(env, `SELECT SUM(CASE WHEN ${jx('$.fallback')} = 1 THEN 1 ELSE 0 END) AS fallback,
+                     SUM(CASE WHEN ${jx('$.heuristic')} = 1 THEN 1 ELSE 0 END) AS heuristic
                 FROM events WHERE type = 'archived' AND ${inRange}`, r),
     one(env, `SELECT COUNT(*) AS users, SUM(CASE WHEN status = 'disabled' THEN 1 ELSE 0 END) AS disabled FROM users`),
     one(env, `SELECT COUNT(DISTINCT user_id) AS n FROM writing_days WHERE user_id IS NOT NULL AND ${inRange}`, r),

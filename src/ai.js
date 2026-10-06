@@ -21,8 +21,9 @@ export async function chat(env, model, { messages, tools, max_tokens = 1024, tem
   if (tools && tools.length) inputs.tools = tools;
   const started = Date.now();
   let res;
+  let logId = null;
   try {
-    res = await runModel(env, model, inputs, meter);
+    ({ res, logId } = await runModel(env, model, inputs, meter));
   } catch (err) {
     await meterCall(env, meter, { model, status: 'error', error: errorText(err), latency: Date.now() - started });
     throw err;
@@ -42,7 +43,7 @@ export async function chat(env, model, { messages, tools, max_tokens = 1024, tem
     },
     toolCalls: out.toolCalls.length,
     finishReason: finishReason(res),
-    logId: gatewayLogId(env),
+    logId,
   });
   return out;
 }
@@ -54,10 +55,13 @@ export async function runModel(env, model, inputs, meter = null) {
   // serve that prefix from its prompt cache, billed at about a sixth.
   if (meter && meter.affinity) options.extraHeaders = { 'x-session-affinity': meter.affinity };
   try {
-    return await env.AI.run(model, inputs, options);
+    const res = await env.AI.run(model, inputs, options);
+    // The binding keeps only the latest call's log id, so read it at once.
+    return { res, logId: gatewayLogId(env) };
   } catch (err) {
-    // Older runtimes / local dev may reject the gateway option; retry bare.
-    if (/gateway/i.test(String(err))) return env.AI.run(model, inputs);
+    // Older runtimes / local dev may reject the gateway option; retry bare
+    // (no gateway, so no log id).
+    if (/gateway/i.test(String(err))) return { res: await env.AI.run(model, inputs), logId: null };
     throw err;
   }
 }

@@ -33,9 +33,10 @@ export function firstEmbeddingVector(payload) {
 // metadata index on user_id). If filtering is unavailable or comes back
 // empty, query wide and let the caller's D1 ownership check do the
 // filtering; callers must always re-check ownership either way.
-export async function searchSemanticIds(env, q, { limit = 50, userId = null } = {}) {
+// `ctx` (a request's) lets the usage record be written after the response.
+export async function searchSemanticIds(env, q, { limit = 50, userId = null, ctx = null } = {}) {
   if (!semanticFeatureEnabled(env)) return null;
-  const vector = await embedText(env, q, { feature: 'embed', userId });
+  const vector = await embedText(env, q, { feature: 'embed', userId, ctx });
   if (!vector) return null;
 
   const topK = Math.max(1, Math.min(limit, 100));
@@ -72,11 +73,11 @@ async function queryIndex(env, vector, options) {
   return ids;
 }
 
-export async function upsertDocumentVector(env, doc) {
+export async function upsertDocumentVector(env, doc, { ctx = null } = {}) {
   if (!semanticFeatureEnabled(env)) return false;
   const source = buildSemanticSource(doc);
   if (!source) return false;
-  const vector = await embedText(env, source, { feature: 'embed', userId: doc.user_id || null, docId: doc.id });
+  const vector = await embedText(env, source, { feature: 'embed', userId: doc.user_id || null, docId: doc.id, ctx });
   if (!vector) return false;
 
   try {

@@ -40,7 +40,7 @@ export async function reopenDocument(env, id, viewer) {
   return json({ id, status: 'draft', content, updated_at: now });
 }
 
-export async function restoreDocument(env, id, viewer) {
+export async function restoreDocument(env, id, viewer, ctx = null) {
   const scope = ownerScope(viewer);
   const result = await env.DB.prepare(
     `UPDATE documents
@@ -62,7 +62,7 @@ export async function restoreDocument(env, id, viewer) {
       )
         .bind(id)
         .first();
-      if (archived) await upsertDocumentVector(env, archived);
+      if (archived) await upsertDocumentVector(env, archived, { ctx });
     } catch (err) {
       console.error(`restore: vector upsert failed for ${id}`, err);
     }

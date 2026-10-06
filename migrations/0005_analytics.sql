@@ -32,10 +32,11 @@ CREATE INDEX IF NOT EXISTS idx_ai_calls_user ON ai_calls (user_id, day);
 CREATE INDEX IF NOT EXISTS idx_ai_calls_doc ON ai_calls (doc_id);
 
 -- Page views get a table of their own. Still no IP and no cookie:
--- `visitor` is the daily hash, `session` is derived from it on the server
--- (30 quiet minutes end a session), and `view_id` is a random id the page
--- keeps in memory to report how the view went (engaged time, scroll
--- depth, Web Vitals).
+-- `visitor` is the daily hash (keyed for this table only, so it cannot be
+-- joined to events), `session` is derived from it on the server (30 quiet
+-- minutes end a session), and `view_id` is a random id the page keeps in
+-- memory to report how the view went (engaged time, scroll depth, Web
+-- Vitals).
 CREATE TABLE IF NOT EXISTS pageviews (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   ts           TEXT NOT NULL,
@@ -65,13 +66,15 @@ CREATE TABLE IF NOT EXISTS pageviews (
   cls          INTEGER                          -- layout shift score x 1000
 );
 CREATE INDEX IF NOT EXISTS idx_pageviews_day ON pageviews (day, path);
-CREATE INDEX IF NOT EXISTS idx_pageviews_view ON pageviews (view_id);
+-- One row per view id: a client can only ever report on its own view.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pageviews_view ON pageviews (view_id);
 CREATE INDEX IF NOT EXISTS idx_pageviews_visitor ON pageviews (visitor, id);
 CREATE INDEX IF NOT EXISTS idx_pageviews_session ON pageviews (session);
 
--- Move the page views recorded so far; each one becomes its own session.
+-- Move the page views recorded so far. Their sessions are unknown, so each
+-- gets a 'legacy-' one that the session numbers (bounce rate) leave out.
 INSERT INTO pageviews (ts, day, view_id, visitor, session, entry, path, referrer, channel, country, device)
-SELECT ts, day, 'e' || id, COALESCE(visitor, ''), 'e' || id, 1, COALESCE(path, '/'), referrer,
+SELECT ts, day, 'legacy-' || id, COALESCE(visitor, ''), 'legacy-' || id, 1, COALESCE(path, '/'), referrer,
        CASE
          WHEN referrer IS NULL THEN 'direct'
          WHEN referrer IN ('chatgpt.com', 'chat.openai.com', 'perplexity.ai', 'claude.ai', 'gemini.google.com',
@@ -93,13 +96,13 @@ ALTER TABLE events ADD COLUMN value REAL;
 CREATE INDEX IF NOT EXISTS idx_events_doc ON events (doc_id);
 
 -- Who wrote on which day: one row per document per day, bumped by every
--- save. Signed-in writers by account, anonymous ones by the daily visitor
--- hash only, so nobody is followed across days without an account.
+-- save. Signed-in writers by account; anonymous drafts carry only a flag,
+-- never a visitor hash, so a draft cannot link anyone's visits together.
 CREATE TABLE IF NOT EXISTS writing_days (
   day     TEXT NOT NULL,
   doc_id  TEXT NOT NULL,
   user_id TEXT,
-  visitor TEXT,
+  anon    INTEGER NOT NULL DEFAULT 0,  -- written without an account that day
   saves   INTEGER NOT NULL DEFAULT 0,
   chars   INTEGER NOT NULL DEFAULT 0,  -- length after the day's last save
   PRIMARY KEY (day, doc_id)

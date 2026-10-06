@@ -508,7 +508,6 @@ function systemCard(s) {
     [t('system.cloudflare'), s.cloudflareAnalytics ? t('system.on') : t('system.off')],
     [t('system.semantic'), s.semantic ? t('system.on') : t('system.off')],
     [t('system.siteLock'), s.siteLock ? t('system.on') : t('system.off')],
-    [t('system.rows'), Object.entries(s.rows || {}).map(([k, v]) => `${k} ${nf.format(v)}`).join(' · ')],
   ]));
   return card;
 }
