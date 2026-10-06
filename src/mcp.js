@@ -1,4 +1,4 @@
-import { hydrateArchivedRowsByIds, keywordSearchRows, parseSearchMode } from './search.js';
+import { hydrateArchivedRowsByIds, keywordSearchRows, parseSearchMode, EVERYTHING } from './search.js';
 import { searchSemanticIds } from './semantic.js';
 import { WRITER_VERSION } from './version.js';
 
@@ -141,14 +141,15 @@ async function searchTool(env, args) {
   if (mode === 'semantic') {
     const semantic = await searchSemanticIds(env, query, { limit });
     if (semantic) {
-      const rows = await hydrateArchivedRowsByIds(env, semantic.ids, { limit });
+      // Operator-level access: the instance key reads every account's archive.
+      const rows = await hydrateArchivedRowsByIds(env, semantic.ids, { limit, scope: EVERYTHING });
       return { mode: 'semantic', fallback: false, matches: rows.map(publicMcpDoc) };
     }
-    const fallbackRows = await keywordSearchRows(env, query, { limit });
+    const fallbackRows = await keywordSearchRows(env, query, { limit, scope: EVERYTHING });
     return { mode: 'keyword', fallback: true, matches: fallbackRows.map(publicMcpDoc) };
   }
 
-  const rows = await keywordSearchRows(env, query, { limit });
+  const rows = await keywordSearchRows(env, query, { limit, scope: EVERYTHING });
   return { mode: 'keyword', fallback: false, matches: rows.map(publicMcpDoc) };
 }
 

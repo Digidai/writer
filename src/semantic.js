@@ -27,18 +27,31 @@ export function firstEmbeddingVector(payload) {
   return null;
 }
 
-export async function searchSemanticIds(env, q, { limit = 50 } = {}) {
+// With a userId, ask Vectorize for that user's vectors only (needs a
+// metadata index on user_id). If filtering is unavailable or comes back
+// empty, query wide and let the caller's D1 ownership check do the
+// filtering; callers must always re-check ownership either way.
+export async function searchSemanticIds(env, q, { limit = 50, userId = null } = {}) {
   if (!semanticFeatureEnabled(env)) return null;
   const vector = await embedText(env, q);
   if (!vector) return null;
 
   const topK = Math.max(1, Math.min(limit, 100));
+  if (userId) {
+    const filtered = await queryIndex(env, vector, { topK, filter: { user_id: String(userId) } });
+    if (filtered && filtered.length > 0) return { ids: filtered };
+  }
+  const wide = await queryIndex(env, vector, { topK: userId ? 100 : topK });
+  return wide ? { ids: wide } : null;
+}
+
+async function queryIndex(env, vector, options) {
   let result;
   try {
-    result = await env.ARCHIVE_INDEX.query(vector, { topK });
+    result = await env.ARCHIVE_INDEX.query(vector, options);
   } catch {
     try {
-      result = await env.ARCHIVE_INDEX.query({ vector, topK });
+      result = await env.ARCHIVE_INDEX.query({ vector, ...options });
     } catch (err) {
       console.warn('semantic query failed', err);
       return null;
@@ -54,7 +67,7 @@ export async function searchSemanticIds(env, q, { limit = 50 } = {}) {
   for (const match of matches) {
     if (match && typeof match.id === 'string') ids.push(match.id);
   }
-  return { ids };
+  return ids;
 }
 
 export async function upsertDocumentVector(env, doc) {
@@ -70,6 +83,7 @@ export async function upsertDocumentVector(env, doc) {
         id: String(doc.id),
         values: vector,
         metadata: {
+          user_id: String(doc.user_id || ''),
           title: String(doc.title || '').slice(0, 120),
           category: String(doc.category || '').slice(0, 60),
           archived_at: String(doc.archived_at || ''),
@@ -156,7 +170,7 @@ function normalizeVector(vector) {
 async function loadBackfillBatch(env, limit) {
   try {
     const { results } = await env.DB.prepare(
-      `SELECT id, title, summary, content, formatted, category, archived_at
+      `SELECT id, title, summary, content, formatted, category, archived_at, user_id
          FROM documents
         WHERE status = 'archived'
           AND (vector_indexed_at IS NULL OR vector_indexed_at < COALESCE(archived_at, ''))
@@ -171,7 +185,7 @@ async function loadBackfillBatch(env, limit) {
     return results || [];
   } catch {
     const { results } = await env.DB.prepare(
-      `SELECT id, title, summary, content, formatted, category, archived_at
+      `SELECT id, title, summary, content, formatted, category, archived_at, user_id
          FROM documents
         WHERE status = 'archived'
         ORDER BY COALESCE(archived_at, updated_at, created_at) ASC

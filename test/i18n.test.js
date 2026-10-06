@@ -58,3 +58,14 @@ test('locale maps to a real Intl locale', () => {
   assert.equal(locale('zh'), 'zh-CN');
   assert.doesNotThrow(() => new Intl.DateTimeFormat(locale('en')).format(new Date(0)));
 });
+
+test('the admin dictionary carries the same keys and placeholders in both languages', async () => {
+  const { ADMIN_MESSAGES } = await import('../public/admin-i18n.js');
+  const zh = Object.keys(ADMIN_MESSAGES.zh).sort();
+  assert.deepEqual(Object.keys(ADMIN_MESSAGES.en).sort(), zh);
+  const vars = (s) => (s.match(/\{\w+\}/g) || []).sort();
+  for (const key of zh) {
+    assert.ok(ADMIN_MESSAGES.zh[key].trim() && ADMIN_MESSAGES.en[key].trim(), `${key} is empty`);
+    assert.deepEqual(vars(ADMIN_MESSAGES.en[key]), vars(ADMIN_MESSAGES.zh[key]), key);
+  }
+});

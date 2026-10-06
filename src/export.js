@@ -4,19 +4,20 @@ import { createZip, buildArchiveEntryName } from './zip.js';
 const MAX_EXPORT_FILES = 200;
 const MAX_EXPORT_BYTES = 20 * 1024 * 1024;
 
-export async function handleExportRequest(request, env) {
-  if (!env.WRITER_ACCESS_KEY) return json({ error: 'export unavailable in demo' }, 403);
+// Every signed-in writer can take their whole archive with them.
+export async function handleExportRequest(request, env, viewer) {
+  if (!viewer || !viewer.user) return json({ error: 'auth_required' }, 401);
   if (request.method === 'HEAD') return new Response(null, { status: 204 });
   if (request.method !== 'GET') return json({ error: 'method not allowed' }, 405);
 
   const { results } = await env.DB.prepare(
     `SELECT id, title, content, formatted, category, tags, created_at, archived_at, updated_at
        FROM documents
-      WHERE status = 'archived'
+      WHERE status = 'archived' AND user_id = ?
       ORDER BY archived_at DESC
       LIMIT ?`
   )
-    .bind(MAX_EXPORT_FILES + 1)
+    .bind(viewer.user.id, MAX_EXPORT_FILES + 1)
     .all();
 
   const docs = results || [];

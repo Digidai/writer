@@ -11,8 +11,8 @@
 
 [**在线体验 writer.genedai.md**](https://writer.genedai.md) · [架构](#架构) · [部署](#快速开始) · [English](#english)
 
-> [!WARNING]
-> **writer.genedai.md 是公开演示站（PUBLIC DEMO）**：访客可写入文档与站点设置（开放写作），但写入与 AI 补全受速率限制；整库 zip 导出与 MCP 端点关闭。请不要在演示站写入私密内容。
+> [!NOTE]
+> **writer.genedai.md 是公开实例**：打开就能写，不需要账户；想把写完的内容存进档案时，用邮箱验证码登录即可，之前写下的草稿会一起归入你的账户。每个账户的档案只有自己能看到；实例运营者可以在 `/admin` 后台看到全部内容与使用数据。
 
 <img src="docs/screenshot-editor-light.png#gh-light-mode-only" alt="Writer 编辑器：A4 画布与灰色的 AI 续写建议" width="100%">
 <img src="docs/screenshot-editor-dark.png#gh-dark-mode-only" alt="Writer 编辑器：A4 画布与灰色的 AI 续写建议" width="100%">
@@ -33,6 +33,8 @@ Writer 反过来做减法。它只提供一张随时摊开的纸：你负责写�
 
 **归档。** 一篇内容完成后（点击「完成」、按 `⌘⏎`，或静置数分钟自动触发），归档 Agent 接手：它先查看档案库现有的分类体系、检索相似的旧文，再决定这篇的标题、分类、标签、摘要与排版，最后存为 Markdown 文件。
 
+**账户。** 打开就能写，不需要先注册。第一次点「完成」时，Writer 会请你留一个邮箱：收到 6 位验证码、输入，账户就建好了，这台浏览器上之前写的草稿会一起归入账户，然后照常交给 Agent。没有密码要记，下次换设备登录也是同一个邮箱。
+
 **回头修改。** 归档后的内容不是只读的。在阅读页点「修改」，它会变回草稿回到编辑器，改完重新交给 Agent 归档；点「删除」则移入回收站，可以立刻撤销，也可以之后在设置里恢复。彻底删除会同时移除 R2 中的 Markdown 文件。
 
 <table>
@@ -41,7 +43,7 @@ Writer 反过来做减法。它只提供一张随时摊开的纸：你负责写�
 <td width="50%"><img src="docs/screenshot-reader-light.png#gh-light-mode-only" alt="阅读页"><img src="docs/screenshot-reader-dark.png#gh-dark-mode-only" alt="阅读页"></td>
 </tr>
 <tr>
-<td align="center"><b>/archive</b> 按 Agent 维护的分类陈列，支持关键词检索；私有模式可切语义检索与 zip 导出</td>
+<td align="center"><b>/archive</b> 按 Agent 维护的分类陈列，支持关键词检索与整库 zip 导出</td>
 <td align="center"><b>/d/:id</b> 排版后的正文、决策轨迹与原文件下载</td>
 </tr>
 </table>
@@ -81,6 +83,7 @@ Writer 反过来做减法。它只提供一张随时摊开的纸：你负责写�
 | [Workers Assets](https://developers.cloudflare.com/workers/static-assets/) | 编辑器与归档页的静态资源 |
 | [D1](https://developers.cloudflare.com/d1/) | 文档目录、状态机与关键词检索 |
 | [R2](https://developers.cloudflare.com/r2/) | 归档后的 Markdown 文件空间 |
+| [Email Service](https://developers.cloudflare.com/email-service/) | 登录验证码邮件 |
 
 ## 快速开始
 
@@ -132,9 +135,46 @@ export const COMPLETION_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8'; // 输入联想：
 
 Kimi K2.6 属于 Workers AI 的前沿模型，需要 Workers Paid（$5/月）或预付 AI Gateway 额度，免费计划调用会返回 403。此时 Writer 会自动降级到 Qwen3，功能不受影响。参考价格：Kimi $0.95/M 输入、$4.00/M 输出，归档一篇普通长度的文章约几美分；Qwen3-30B 在免费额度内即可运行。
 
+### 登录与邮件
+
+登录用邮箱验证码，通过 [Cloudflare Email Service](https://developers.cloudflare.com/email-service/) 发送（`wrangler.jsonc` 里的 `send_email` 绑定，发件地址是 `MAIL_FROM` 变量）。部署前需要在 Cloudflare 后台为发件域名完成一次接入：**Compute > Email Service > Email Sending > Onboard Domain**，它会在 `cf-bounce` 子域上添加 SPF、DKIM 和 DMARC 记录，不影响域名已有的邮件配置。
+
+接入之前验证码发不出去，登录接口会返回 `503 email_unavailable`，后台「设置」页会显示「邮件发送：未配置」。本地 `npm run dev` 不会真的发信，邮件内容会打印在终端里。
+
+验证码 10 分钟有效、只能用一次、最多试 5 次，数据库只存它的哈希；同一邮箱一小时内最多猜错 10 次，重新发码不会重置。会话 Cookie 是 `__Host-writer_session`（`HttpOnly; Secure; SameSite=Lax`），有效期 90 天，使用中自动续期。所有写操作都拒绝跨站来源，防止登录 CSRF。
+
+不登录也能写：匿名草稿属于这台浏览器，单篇上限 5 万字（登录后 20 万字），整个实例每小时最多新建 100 篇，14 天未被认领会被清理。
+
+### 管理后台
+
+后台在 `/admin`，用一个独立密码登录，密码存为加密 Secret，不进仓库：
+
+```bash
+npx wrangler secret put ADMIN_PASSWORD
+```
+
+没有设置这个 Secret 时 `/admin` 返回 404。登录按 IP 限流（15 分钟 5 次），另有全局预算：一小时最多 30 次尝试，用完锁到下一个整点。预算和后台会话都与当前密码绑定，更换密码会解除锁定，并让所有后台会话立即失效。后台包含：
+
+| 分区 | 内容 |
+| --- | --- |
+| 概览 | 页面浏览、访客、注册、活跃写作者、草稿与归档数、补全请求与采纳率、Agent 降级次数，以及每日趋势 |
+| 访问 | 热门页面、来源、国家或地区、设备 |
+| 用户 | 搜索、查看每个账户的文档与会话；停用、恢复、退出所有设备、连同文档一起删除；导出 CSV |
+| 文档 | 按状态、归属和关键词筛选全部文档；查看正文与 Agent 轨迹；重新整理、移到回收站、恢复、转给用户、彻底删除 |
+| 活动 | 注册、登录、归档、管理操作等事件流 |
+| 设置 | 开放或关闭注册、新用户的默认偏好、邮件状态、立即巡检 |
+
+访问统计不存 IP，也不用追踪 Cookie，页面浏览不关联账户：访客标识是「当天密钥 + IP + UA」的哈希，当天密钥由 `ANALYTICS_SECRET` 按日期派生，只能用来统计当天去重，无法跨天关联同一个人；来源只保留域名，文档链接里的 id 会被去掉。事件保留 180 天。部署时生成一个随机密钥：
+
+```bash
+openssl rand -hex 32 | npx wrangler secret put ANALYTICS_SECRET
+```
+
+没有设置时会退回到存在 D1 里的实例盐，同样按天轮换，但数据库导出就能复算访客标识。
+
 ### 偏好设置
 
-`/settings` 页面的偏好保存在 D1 里（不是浏览器本地），所以换设备打开也一致，服务端的 Cron 与 Agent 读的是同一份：
+`/settings` 页面的偏好跟着账户走（存在 D1 里），换设备打开也一致，服务端的 Cron 与 Agent 读的是同一份。未登录时改动只保存在当前浏览器；新用户的默认值在 `/admin` 里设置：
 
 | 设置 | 作用 |
 | --- | --- |
@@ -146,17 +186,15 @@ Kimi K2.6 属于 Workers AI 的前沿模型，需要 Workers Paid（$5/月）或
 
 同一页底部是回收站，可以恢复或彻底删除。
 
-### 访问密钥
+### 访问密钥（可选的整站锁）
 
-`WRITER_ACCESS_KEY` 不设置时，实例是**公开演示模式**（writer.genedai.md 当前就是这样）：任何访客都可写入文档与站点设置，写入与补全有速率限制。请不要在该模式写私密内容。
-
-如果你要改为私有模式（单一共享密钥）：
+账户系统已经让每个人的档案彼此隔离。如果你还想让整个实例只对知道密钥的人可见（例如自用的私有部署），可以在所有页面前面再加一道锁：
 
 ```bash
 npx wrangler secret put WRITER_ACCESS_KEY
 ```
 
-之后访问 `/unlock` 输入密钥即可（Cookie 有效期 180 天）。解锁密钥只接受表单提交，不进入 URL。设置该 secret 后：实例进入私有模式，并使用更宽松的速率限制。
+之后访问 `/unlock` 输入密钥即可（Cookie 有效期 180 天）。解锁密钥只接受表单提交，不进入 URL。设置后还会启用语义检索、MCP 与向量补齐，并放宽速率限制。
 
 ### 语义检索（私有模式）
 
@@ -181,9 +219,9 @@ npx wrangler vectorize create writer-archive --dimensions=1024 --metric=cosine
 
 随后确保 `wrangler.jsonc` 的 `vectorize` 绑定指向 `writer-archive`。公开演示模式不启用语义检索。
 
-### 整库导出（私有模式）
+### 整库导出
 
-私有模式提供 `GET /api/export`：把已归档 Markdown 打包为 zip（STORE，无压缩）。公开演示模式会返回 403，避免批量下载。
+每个登录用户都可以在归档页一键导出自己的全部归档（`GET /api/export`，Markdown 打包为 zip，最多 200 篇或约 20MB）。只会包含你自己的文档。
 
 ### MCP（私有模式，只读）
 
@@ -234,35 +272,46 @@ Claude Code HTTP MCP 示例：
 
 ```
 src/
-  index.js      路由、API、访问控制、Cron 入口
+  index.js      路由、文档 API（按访问者鉴权）、阅读页、Cron 入口
+  auth.js       邮箱验证码、会话、匿名身份与文档归属
+  admin.js      /admin 后台：登录、统计、用户与文档管理、导出
+  analytics.js  访问与使用事件（不存 IP）
+  email.js      验证码邮件（Cloudflare Email Service）
   pipeline.js   WriterPipeline：归档 Agent 的 Workflow 定义
-  agent.js      流水线启动、Cron 巡检、启发式兜底、R2 文件写入
-  export.js     私有模式下的整库 zip 导出
+  agent.js      流水线启动、Cron 巡检与清理、启发式兜底、R2 文件写入
+  export.js     每个账户的整库 zip 导出
   ai.js         模型声明、工具调用协议、降级逻辑、输入联想
   semantic.js   向量嵌入、Vectorize 检索与归档索引更新
   search.js     关键词检索与语义检索结果回填
   search-endpoint.js /api/search 的模式与回退编排
   zip.js        零依赖 zip 打包（STORE）
-  mcp.js        私有模式只读 MCP 端点（list/search/get）
-  settings.js   实例设置的读写与校验
+  mcp.js        只读 MCP 端点（list/search/get，实例级）
+  settings.js   站点默认值与每个账户的偏好
+  site-config.js 注册开关等实例配置
+  http.js       Cookie、哈希、JSON 等共用工具
   markdown.js   零依赖 Markdown 渲染器（先转义再解析）
   html.js       阅读页与解锁页的服务端渲染
 public/
   index.html    编辑器
-  app.js        自动保存、幽灵补全、多标签页协调、归档触发
+  app.js        自动保存、幽灵补全、多标签页协调、归档与登录衔接
+  auth.js       邮箱验证码登录表单（弹窗与页内两种用法）
+  session.js    当前登录状态
+  login.html    独立登录页
   archive.html  归档页
   archive.js    分类陈列、检索、删除撤销
   settings.html 设置页
-  settings.js   偏好开关与回收站
+  settings.js   偏好开关、账户与回收站
   doc.js        阅读页的修改与删除
+  admin.html    管理后台（admin.js / admin.css / admin-i18n.js）
+  track.js      页面访问上报
   toast.js      共用的提示条
   i18n.js       中英词典，浏览器与 Worker 共用同一份
-  menu.js       收起式导航（右上角菜单）
+  menu.js       收起式导航（右上角菜单与账户入口）
   style.css     全部样式（含深色模式与打印样式）
   fonts/        思源黑体切片（Noto Sans SC，OFL）
 migrations/     D1 迁移，npm run db:remote 应用
 docs/           架构图与截图（scripts/make-diagrams.py 生成）
-test/           node:test 单元测试
+test/           node:test 测试（真实迁移跑在 node:sqlite 上）
 ```
 
 ## 路线图
@@ -297,4 +346,6 @@ When a piece is finished, an archiving agent takes over inside a durable [Cloudf
 
 The interface speaks Chinese and English, following your browser by default and switchable in settings; the agent writes each document's title, tags and summary in that document's own language. Archived pieces are not read-only: "Modify" turns one back into a draft and re-runs the pipeline when you finish, while "Delete" moves it to a trash you can undo immediately or restore later.
 
-Browse and search everything at `/archive`. Keyword search is always on; locked instances also get semantic search (`mode=semantic`), full zip export (`/api/export`), and a read-only MCP endpoint (`/mcp`, Bearer auth with `WRITER_ACCESS_KEY`). No framework, no bundler, no runtime dependencies: what is in `src/` and `public/` is what gets deployed. See [快速开始](#快速开始) for deploy steps (the commands are language-neutral), and [src/ai.js](src/ai.js) to swap models. Note that Kimi K2.6 requires a Workers Paid plan; on the free plan Writer automatically runs on Qwen3 instead.
+Anyone can start writing without an account. The first time you finish a piece, Writer asks for an email and sends a six-digit code; entering it creates the account and claims every draft this browser wrote, then filing proceeds as usual. Each account's archive is private to it, and every signed-in writer can export theirs as a zip. Unclaimed anonymous drafts are removed after 14 days. Operators get an admin console at `/admin` (one password, stored as the `ADMIN_PASSWORD` secret) with traffic and usage numbers, user and document management, and an activity log; page views are counted without storing IP addresses or tying them to accounts (set an `ANALYTICS_SECRET` so visitor hashes cannot be recomputed from a database export). Sign-in mail goes out through Cloudflare Email Service, so onboard your sending domain in the dashboard before going live.
+
+Browse and search everything at `/archive`. Instances with the optional site lock (`WRITER_ACCESS_KEY`) also get semantic search (`mode=semantic`) and a read-only MCP endpoint (`/mcp`, Bearer auth). No framework, no bundler, no runtime dependencies: what is in `src/` and `public/` is what gets deployed. See [快速开始](#快速开始) for deploy steps (the commands are language-neutral), and [src/ai.js](src/ai.js) to swap models. Note that Kimi K2.6 requires a Workers Paid plan; on the free plan Writer automatically runs on Qwen3 instead.

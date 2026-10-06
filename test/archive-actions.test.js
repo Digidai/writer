@@ -1,157 +1,75 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { reopenDocument, restoreDocument } from '../src/archive-actions.js';
+import { createEnv } from './helpers/env.js';
 
 const DOC_ID = '123e4567-e89b-12d3-a456-426614174000';
+const owner = { user: { id: 'u1', email: 'u1@example.com' }, anonId: null, cookies: [] };
+const stranger = { user: { id: 'u2', email: 'u2@example.com' }, anonId: null, cookies: [] };
 
-test('restore trash -> archived re-upserts the document vector', async () => {
-  let aiCalls = 0;
-  let upsertCalls = 0;
-  const env = {
+function semanticWorld() {
+  const calls = { upserts: [], deletes: [] };
+  const world = createEnv({
     WRITER_ACCESS_KEY: 'secret',
-    AI: {
-      async run(model, payload) {
-        aiCalls += 1;
-        assert.equal(model, '@cf/baai/bge-m3');
-        assert.deepEqual(payload, { text: ['Title\n\nSummary\n\nBody'] });
-        return { data: [[0.1, 0.2, 0.3]] };
-      },
-    },
+    AI: { async run() { return { data: [[0.1, 0.2, 0.3]] }; } },
     ARCHIVE_INDEX: {
-      async upsert(entries) {
-        upsertCalls += 1;
-        assert.equal(entries.length, 1);
-        assert.equal(entries[0].id, DOC_ID);
-        assert.deepEqual(entries[0].values, [0.1, 0.2, 0.3]);
-      },
+      async upsert(entries) { calls.upserts.push(...entries); },
+      async deleteByIds(ids) { calls.deletes.push(...ids); },
     },
-    DB: {
-      prepare(sql) {
-        if (sql.includes("WHERE id = ? AND status = 'deleted'")) {
-          return {
-            bind(updatedAt, id) {
-              assert.equal(typeof updatedAt, 'string');
-              assert.equal(id, DOC_ID);
-              return { async run() { return { meta: { changes: 1 } }; } };
-            },
-          };
-        }
-        if (sql === 'SELECT status FROM documents WHERE id = ?') {
-          return {
-            bind(id) {
-              assert.equal(id, DOC_ID);
-              return { async first() { return { status: 'archived' }; } };
-            },
-          };
-        }
-        if (sql.includes("WHERE id = ? AND status = 'archived'")) {
-          return {
-            bind(id) {
-              assert.equal(id, DOC_ID);
-              return {
-                async first() {
-                  return {
-                    id: DOC_ID,
-                    title: 'Title',
-                    summary: 'Summary',
-                    content: 'Body',
-                    formatted: '',
-                    category: 'Notes',
-                    archived_at: '2026-08-16T00:00:00.000Z',
-                  };
-                },
-              };
-            },
-          };
-        }
-        throw new Error(`Unexpected SQL in restore archived test: ${sql}`);
-      },
-    },
-  };
+  });
+  return { ...world, calls };
+}
 
-  const res = await restoreDocument(env, DOC_ID);
+function addDoc(DB, { status, archived = true, user = 'u1' }) {
+  DB.raw.prepare(
+    `INSERT INTO documents (id, title, summary, content, formatted, status, category, created_at, updated_at, archived_at, deleted_at, user_id)
+     VALUES (?, 'Title', 'Summary', 'Body', '', ?, 'Notes', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z', ?, ?, ?)`
+  ).run(DOC_ID, status, archived ? '2026-10-01T00:00:00.000Z' : null, status === 'deleted' ? '2026-10-02T00:00:00.000Z' : null, user);
+}
+
+test('restore trash -> archived re-upserts the vector with its owner', async () => {
+  const { env, DB, calls } = semanticWorld();
+  addDoc(DB, { status: 'deleted' });
+  const res = await restoreDocument(env, DOC_ID, owner);
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { id: DOC_ID, status: 'archived' });
-  assert.equal(aiCalls, 1);
-  assert.equal(upsertCalls, 1);
+  assert.equal(calls.upserts.length, 1);
+  assert.equal(calls.upserts[0].metadata.user_id, 'u1');
 });
 
 test('restore trash -> draft does not upsert a vector', async () => {
-  let aiCalls = 0;
-  let upsertCalls = 0;
-  const env = {
-    WRITER_ACCESS_KEY: 'secret',
-    AI: { async run() { aiCalls += 1; return { data: [[0.1, 0.2]] }; } },
-    ARCHIVE_INDEX: { async upsert() { upsertCalls += 1; } },
-    DB: {
-      prepare(sql) {
-        if (sql.includes("WHERE id = ? AND status = 'deleted'")) {
-          return {
-            bind(_updatedAt, id) {
-              assert.equal(id, DOC_ID);
-              return { async run() { return { meta: { changes: 1 } }; } };
-            },
-          };
-        }
-        if (sql === 'SELECT status FROM documents WHERE id = ?') {
-          return {
-            bind(id) {
-              assert.equal(id, DOC_ID);
-              return { async first() { return { status: 'draft' }; } };
-            },
-          };
-        }
-        if (sql.includes("WHERE id = ? AND status = 'archived'")) {
-          throw new Error('archived fetch should not run when restored status is draft');
-        }
-        throw new Error(`Unexpected SQL in restore draft test: ${sql}`);
-      },
-    },
-  };
-
-  const res = await restoreDocument(env, DOC_ID);
-  assert.equal(res.status, 200);
+  const { env, DB, calls } = semanticWorld();
+  addDoc(DB, { status: 'deleted', archived: false });
+  const res = await restoreDocument(env, DOC_ID, owner);
   assert.deepEqual(await res.json(), { id: DOC_ID, status: 'draft' });
-  assert.equal(aiCalls, 0);
-  assert.equal(upsertCalls, 0);
+  assert.equal(calls.upserts.length, 0);
 });
 
-test('restore when not in trash returns 404', async () => {
-  const env = {
-    DB: {
-      prepare(sql) {
-        assert.match(sql, /WHERE id = \? AND status = 'deleted'/);
-        return {
-          bind() {
-            return { async run() { return { meta: { changes: 0 } }; } };
-          },
-        };
-      },
-    },
-  };
-
-  const res = await restoreDocument(env, DOC_ID);
-  assert.equal(res.status, 404);
-  assert.deepEqual(await res.json(), { error: 'not in trash' });
+test('restore when not in trash, or not yours, returns 404', async () => {
+  const { env, DB } = createEnv();
+  addDoc(DB, { status: 'archived' });
+  assert.equal((await restoreDocument(env, DOC_ID, owner)).status, 404);
+  DB.raw.prepare(`UPDATE documents SET status = 'deleted'`).run();
+  assert.equal((await restoreDocument(env, DOC_ID, stranger)).status, 404);
+  assert.equal(DB.get('SELECT status FROM documents').status, 'deleted');
 });
 
 test('reopen returns 409 for processing and deleted rows', async () => {
   for (const status of ['processing', 'deleted']) {
-    const env = {
-      DB: {
-        prepare(sql) {
-          assert.equal(sql, 'SELECT * FROM documents WHERE id = ?');
-          return {
-            bind(id) {
-              assert.equal(id, DOC_ID);
-              return { async first() { return { id, status, content: 'text' }; } };
-            },
-          };
-        },
-      },
-    };
-    const res = await reopenDocument(env, DOC_ID);
+    const { env, DB } = createEnv();
+    addDoc(DB, { status });
+    const res = await reopenDocument(env, DOC_ID, owner);
     assert.equal(res.status, 409);
     assert.deepEqual(await res.json(), { error: status, status });
   }
+});
+
+test('reopen an archived document: back to a draft, vector removed; strangers get 404', async () => {
+  const { env, DB, calls } = semanticWorld();
+  addDoc(DB, { status: 'archived' });
+  assert.equal((await reopenDocument(env, DOC_ID, stranger)).status, 404);
+  const res = await reopenDocument(env, DOC_ID, owner);
+  assert.equal(res.status, 200);
+  assert.equal(DB.get('SELECT status FROM documents').status, 'draft');
+  assert.deepEqual(calls.deletes, [DOC_ID]);
 });

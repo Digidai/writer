@@ -4,6 +4,9 @@ import { toast, hideToast } from '/toast.js';
 import { makeT, applyDom, resolveLang, locale } from '/i18n.js';
 import { mountMenu } from '/menu.js';
 import { redirectIfLocked } from '/locked.js';
+import { getSession, onSession } from '/session.js';
+import { renderAuthForm } from '/auth.js';
+import '/track.js';
 
 function storedSettings() {
   try {
@@ -26,6 +29,8 @@ const searchEl = document.getElementById('search');
 const exportBtn = document.getElementById('export-all');
 const searchModeEl = document.getElementById('search-mode');
 const searchModeButtons = Array.from(document.querySelectorAll('.search-mode-button'));
+const signinEl = document.getElementById('signin');
+const archiveControls = [searchEl, document.querySelector('.archive-actions')];
 
 let pollTimer = null;
 let searchTimer = null;
@@ -38,7 +43,7 @@ async function load() {
   try {
     const res = await fetch('/api/documents?status=archived,processing');
     if (await redirectIfLocked(res)) return;
-    if (res.status === 401) { lockedEl.hidden = false; return; }
+    if (res.status === 401) { showSignIn(); return; }
     if (!res.ok) throw new Error(`list ${res.status}`);
     data = await res.json();
   } catch {
@@ -115,18 +120,32 @@ for (const button of searchModeButtons) {
   });
 }
 
-async function detectLockedFeatures() {
+// Export is for every signed-in writer; semantic search only where the
+// instance has it switched on.
+async function detectFeatures() {
   if (!exportBtn || !searchModeEl) return;
-  try {
-    const res = await fetch('/api/export', { method: 'HEAD' });
-    if (await redirectIfLocked(res)) return;
-    lockedFeatures = res.status === 204;
-  } catch {
-    lockedFeatures = false;
-  }
-  exportBtn.hidden = !lockedFeatures;
-  searchModeEl.hidden = !lockedFeatures;
-  if (!lockedFeatures) setSearchMode('keyword');
+  const session = await getSession();
+  const features = (session && session.features) || {};
+  lockedFeatures = Boolean(features.export);
+  exportBtn.hidden = !features.export;
+  searchModeEl.hidden = !features.semantic;
+  if (!features.semantic) setSearchMode('keyword');
+}
+
+// Signed out: the archive is private, so offer the sign-in form in its place.
+function showSignIn() {
+  if (!signinEl) return;
+  for (const node of archiveControls) if (node) node.hidden = true;
+  processingEl.hidden = true;
+  groupsEl.replaceChildren();
+  emptyEl.hidden = true;
+  signinEl.replaceChildren(renderAuthForm({
+    t,
+    reason: 'archive',
+    lang,
+    onSuccess: () => location.reload(),
+  }));
+  signinEl.hidden = false;
 }
 
 function parseFilename(contentDisposition) {
@@ -338,4 +357,6 @@ setSearchMode('keyword');
 load();
 offerUndo();
 syncPrefs();
-detectLockedFeatures();
+detectFeatures();
+// Signed in from the menu: show this account's archive.
+onSession(() => location.reload());

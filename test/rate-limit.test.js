@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { enforceRateLimit } from '../src/rate-limit.js';
+import { enforceRateLimit, limitKeyForIp } from '../src/rate-limit.js';
 
 test('enforceRateLimit returns 429 with Retry-After once exhausted', async () => {
   let nowMs = 0;
@@ -70,3 +70,12 @@ class FakeCache {
     return this.store.keys();
   }
 }
+
+test('IPv6 clients are limited per /64, IPv4 per address', () => {
+  assert.equal(limitKeyForIp('203.0.113.9'), '203.0.113.9');
+  assert.equal(limitKeyForIp('::ffff:203.0.113.9'), '203.0.113.9');
+  assert.equal(limitKeyForIp('2001:db8:abcd:12:1:2:3:4'), '2001:db8:abcd:12::/64');
+  assert.equal(limitKeyForIp('2001:0DB8:abcd:0012:ffff::1'), '2001:db8:abcd:12::/64');
+  assert.equal(limitKeyForIp('2001:db8::1'), '2001:db8:0:0::/64');
+  assert.equal(limitKeyForIp('::1'), '0:0:0:0::/64');
+});

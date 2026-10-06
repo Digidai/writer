@@ -10,9 +10,10 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { agentChat } from './ai.js';
 import { storeFile, clip } from './agent.js';
-import { readSettings } from './settings.js';
+import { readUserSettings } from './settings.js';
 import { persistArchive } from './persist.js';
 import { upsertDocumentVector } from './semantic.js';
+import { recordEvent } from './analytics.js';
 
 const MAX_TURNS = 6;
 // Above this size the agent files metadata only and the original text is
@@ -27,7 +28,8 @@ export class WriterPipeline extends WorkflowEntrypoint {
     const doc = await step.do('load-document', () => this.loadDoc(docId));
     if (!doc) return { skipped: docId };
 
-    const settings = await step.do('load-settings', () => readSettings(this.env));
+    // The owner's own preferences (agent typesetting on or off).
+    const settings = await step.do('load-settings', () => readUserSettings(this.env, doc.user_id));
 
     const trace = [];
     let finish = null;
@@ -39,7 +41,7 @@ export class WriterPipeline extends WorkflowEntrypoint {
       // so replays after eviction reconstruct the exact same loop state.
       let r;
       try {
-        r = await step.do(`agent-turn-${turn}`, STEP_RETRIES, () => this.turn(messages));
+        r = await step.do(`agent-turn-${turn}`, STEP_RETRIES, () => this.turn(messages, doc));
       } catch (err) {
         trace.push({ turn, error: String(err && err.message ? err.message : err).slice(0, 300) });
         break;
@@ -90,18 +92,30 @@ export class WriterPipeline extends WorkflowEntrypoint {
     if (persisted.skipped) return { skipped: doc.id, reason: persisted.reason, turns: trace.length };
 
     await step.do('store-file', () => storeFile(this.env, persisted.final));
-    await step.do('index-vector', () => upsertDocumentVector(this.env, persisted.final));
+    await step.do('index-vector', () => upsertDocumentVector(this.env, { ...persisted.final, user_id: doc.user_id }));
+    await step.do('record-event', () => recordEvent(this.env, {
+      type: 'archived',
+      userId: doc.user_id,
+      meta: archiveMeta(trace, finish, persisted.final.category),
+    }));
     return { archived: doc.id, category: persisted.final.category, turns: trace.length };
   }
 
   async loadDoc(docId) {
     const row = await this.env.DB.prepare('SELECT * FROM documents WHERE id = ?').bind(docId).first();
     if (!row || row.status === 'archived') return null;
-    return { id: row.id, title: row.title, content: String(row.content || ''), created_at: row.created_at };
+    return {
+      id: row.id,
+      title: row.title,
+      content: String(row.content || ''),
+      created_at: row.created_at,
+      user_id: row.user_id || null,
+      anon_id: row.anon_id || null,
+    };
   }
 
   // One reasoning turn: call the model, execute any tool calls it makes.
-  async turn(messages) {
+  async turn(messages, doc) {
     const r = await agentChat(this.env, {
       messages,
       tools: TOOL_SPECS,
@@ -119,7 +133,7 @@ export class WriterPipeline extends WorkflowEntrypoint {
       }
       let result;
       try {
-        result = await this.runTool(call);
+        result = await this.runTool(call, doc);
       } catch (err) {
         result = { error: String(err).slice(0, 200) };
       }
@@ -129,17 +143,20 @@ export class WriterPipeline extends WorkflowEntrypoint {
     return { model: r.model, content: r.content, toolCalls: r.toolCalls, toolResults, finish };
   }
 
-  async runTool(call) {
+  // Tools only ever see the owner's own archive: one writer's taxonomy
+  // and titles must never reach the agent filing someone else's piece.
+  async runTool(call, doc) {
+    const owner = docOwnerScope(doc);
     if (call.name === 'list_categories') {
       const cats = await this.env.DB.prepare(
         `SELECT category, COUNT(*) AS count FROM documents
-          WHERE status = 'archived' AND category IS NOT NULL
+          WHERE status = 'archived' AND category IS NOT NULL AND ${owner.sql}
           GROUP BY category ORDER BY count DESC LIMIT 20`
-      ).all();
+      ).bind(...owner.binds).all();
       const recent = await this.env.DB.prepare(
         `SELECT title, category FROM documents
-          WHERE status = 'archived' ORDER BY archived_at DESC LIMIT 12`
-      ).all();
+          WHERE status = 'archived' AND ${owner.sql} ORDER BY archived_at DESC LIMIT 12`
+      ).bind(...owner.binds).all();
       return {
         categories: (cats.results || []),
         recent: (recent.results || []),
@@ -152,16 +169,38 @@ export class WriterPipeline extends WorkflowEntrypoint {
       const like = `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
       const { results } = await this.env.DB.prepare(
         `SELECT id, title, category, tags, summary FROM documents
-          WHERE status = 'archived'
+          WHERE status = 'archived' AND ${owner.sql}
             AND (title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')
           ORDER BY archived_at DESC LIMIT 5`
-      ).bind(like, like, like, like).all();
+      ).bind(...owner.binds, like, like, like, like).all();
       return { results: results || [] };
     }
 
     return { error: `未知工具: ${call.name}` };
   }
 
+}
+
+// Documents from before accounts (no user, no anonymous id) form their
+// own pool, so an admin re-run files them against each other only.
+export function docOwnerScope(doc) {
+  if (doc && doc.user_id) return { sql: 'user_id = ?', binds: [doc.user_id] };
+  if (doc && doc.anon_id) return { sql: '(user_id IS NULL AND anon_id = ?)', binds: [doc.anon_id] };
+  return { sql: '(user_id IS NULL AND anon_id IS NULL)', binds: [] };
+}
+
+// What /admin shows about each run: which model answered, how many turns,
+// and whether it fell back to Qwen or to the heuristics.
+export function archiveMeta(trace, finish, category) {
+  const models = trace.map((t) => String(t.model || '')).filter(Boolean);
+  const last = models[models.length - 1] || '';
+  return {
+    turns: trace.filter((t) => typeof t.turn === 'number').length,
+    model: last.replace(/^@cf\/[^/]+\//, ''),
+    fallback: models.some((m) => /qwen/i.test(m)),
+    heuristic: !finish,
+    category: String(category || '').slice(0, 24),
+  };
 }
 
 // ------------------------------------------------------------ prompts
