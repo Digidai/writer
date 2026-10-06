@@ -157,20 +157,38 @@ npx wrangler secret put ADMIN_PASSWORD
 
 | 分区 | 内容 |
 | --- | --- |
-| 概览 | 页面浏览、访客、注册、活跃写作者、草稿与归档数、补全请求与采纳率、Agent 降级次数，以及每日趋势 |
-| 访问 | 热门页面、来源、国家或地区、设备 |
-| 用户 | 搜索、查看每个账户的文档与会话；停用、恢复、退出所有设备、连同文档一起删除；导出 CSV |
-| 文档 | 按状态、归属和关键词筛选全部文档；查看正文与 Agent 轨迹；重新整理、移到回收站、恢复、转给用户、彻底删除 |
-| 活动 | 注册、登录、归档、管理操作等事件流 |
-| 设置 | 开放或关闭注册、新用户的默认偏好、邮件状态、立即巡检 |
+| 概览 | 访客、浏览、跳出率、注册、活跃写作者、归档、模型花费与出错率、联想采纳率，每日趋势与健康状况 |
+| 访问 | 访客、访问次数、跳出率、停留时长与滚动深度；渠道（搜索、社交、AI 助手、邮件、推广活动）、来源网站、UTM 活动、页面、入口页与离开页、地区、设备、浏览器、系统、语言、屏幕宽度、一天中的时段；Web Vitals（LCP、INP、CLS、FCP、TTFB 的第 75 百分位）；浏览明细与 CSV。点任意一行就按它筛选，筛选可以叠加 |
+| 产品 | 新访客转化漏斗（匿名开始写作、点完成被要求登录、发码、注册、注册后归档）、写作者与 DAU/WAU/MAU、保存次数与字数、按注册周的留存、输入联想（请求、展示、采纳、关掉）、归档 Agent（轮数、耗时、降级、分类、谁发起）、检索、功能使用、改过的设置、错误与限流 |
+| 模型 | 每次 Workers AI 调用：花费（按 Workers AI 报告的 neurons 计）、调用数、出错率、输入与缓存命中、输出与推理 token、p50/p95 耗时、每次归档与每次联想的成本、今天用掉的免费额度；按模型、功能、用户、文档拆分；错误码；调用明细与 CSV。可按模型、功能、结果、用户、文档、是否降级筛选 |
+| 用户 | 搜索、查看每个账户的文档、会话、写作天数和模型用量；停用、恢复、退出所有设备、连同文档一起删除；导出 CSV |
+| 文档 | 按状态、归属和关键词筛选全部文档；查看正文、Agent 轨迹、这篇文档的每次模型调用与活动；重新整理、移到回收站、恢复、转给用户、彻底删除 |
+| 活动 | 全部事件，按类型、用户、文档和关键词筛选，展开看详情，导出 CSV |
+| 设置 | 开放或关闭注册、新用户的默认偏好、邮件与统计状态、数据量、立即巡检 |
 
-访问统计不存 IP，也不用追踪 Cookie，页面浏览不关联账户：访客标识是「当天密钥 + IP + UA」的哈希，当天密钥由 `ANALYTICS_SECRET` 按日期派生，只能用来统计当天去重，无法跨天关联同一个人；来源只保留域名，文档链接里的 id 会被去掉。事件保留 180 天。部署时生成一个随机密钥：
+所有统计页共用一个时间范围（今天、7、30、90 天或自定义起止日期），筛选写在网址里，可以收藏或发给别人。
+
+访问统计不存 IP，也不用追踪 Cookie，页面浏览不关联账户：访客标识是「当天密钥 + IP + UA」的哈希，当天密钥由 `ANALYTICS_SECRET` 按日期派生，只能用来统计当天去重，无法跨天关联同一个人；访问次数由这个标识在服务端推出（静默 30 分钟算新的一次）。来源只保留域名，文档链接里的 id 会被去掉；浏览器、系统只记大类，屏幕只记宽度区间；停留时长、滚动深度和 Web Vitals 由页面在隐藏时上报，页面只在内存里持有一个随机的浏览 id。检索不存检索词，前端错误不存网址。页面浏览、模型调用、事件和写作记录都保留 180 天。部署时生成一个随机密钥：
 
 ```bash
 openssl rand -hex 32 | npx wrangler secret put ANALYTICS_SECRET
 ```
 
 没有设置时会退回到存在 D1 里的实例盐，同样按天轮换，但数据库导出就能复算访客标识。
+
+### 模型用量
+
+每次调用 Workers AI（输入联想、归档 Agent 的每一轮、Kimi 不可用时的 Qwen 降级、向量嵌入）都会记一条：功能、模型、结果与错误码、耗时、输入 token（其中缓存命中多少）、输出 token（其中推理多少），以及 Workers AI 在响应里报告的 neurons，这是它实际计费的单位。花费按 $0.011 / 1,000 neurons 换算，未扣除每个账户每天 10,000 neurons 的免费额度。响应里没有报告用量的调用，按本地估算的 token 和列表价计算，并在明细里标出来。
+
+归档 Agent 每一轮都会带上 `x-session-affinity`，把同一篇文档的多轮对话留在同一台机器上，重复的前缀（指令和正文）可以命中 Kimi 的提示缓存，缓存部分按约六分之一的价格计费。调用也会带上 AI Gateway 的元数据（功能、文档），Cloudflare 后台的 AI Gateway 日志可以按同样的维度筛选。
+
+想和 Cloudflare 的账单数字对账，可以给 Worker 一个只有 Account Analytics 读取权限的 API Token，「模型」页底部就会显示 Cloudflare 统计的整个账户用量：
+
+```bash
+npx wrangler secret put CF_ANALYTICS_TOKEN
+```
+
+账户 id 写在 `wrangler.jsonc` 的 `CF_ACCOUNT_ID` 变量里。这是整个账户的用量，同一账户下其他项目的调用也会算进去。
 
 ### 偏好设置
 
@@ -274,8 +292,10 @@ Claude Code HTTP MCP 示例：
 src/
   index.js      路由、文档 API（按访问者鉴权）、阅读页、Cron 入口
   auth.js       邮箱验证码、会话、匿名身份与文档归属
-  admin.js      /admin 后台：登录、统计、用户与文档管理、导出
-  analytics.js  访问与使用事件（不存 IP）
+  admin.js      /admin 后台：登录、用户与文档管理、导出
+  admin-analytics.js 后台的统计报表：访问、产品、模型用量、活动，以及筛选
+  analytics.js  页面浏览、访问次数、渠道、Web Vitals 与产品事件（不存 IP）
+  ai-usage.js   每次模型调用的用量记录与价目
   email.js      验证码邮件（Cloudflare Email Service）
   pipeline.js   WriterPipeline：归档 Agent 的 Workflow 定义
   agent.js      流水线启动、Cron 巡检与清理、启发式兜底、R2 文件写入
@@ -303,7 +323,7 @@ public/
   settings.js   偏好开关、账户与回收站
   doc.js        阅读页的修改与删除
   admin.html    管理后台（admin.js / admin.css / admin-i18n.js）
-  track.js      页面访问上报
+  track.js      页面浏览、停留、滚动深度、Web Vitals 与前端错误上报
   toast.js      共用的提示条
   i18n.js       中英词典，浏览器与 Worker 共用同一份
   menu.js       收起式导航（右上角菜单与账户入口）
@@ -346,6 +366,6 @@ When a piece is finished, an archiving agent takes over inside a durable [Cloudf
 
 The interface speaks Chinese and English, following your browser by default and switchable in settings; the agent writes each document's title, tags and summary in that document's own language. Archived pieces are not read-only: "Modify" turns one back into a draft and re-runs the pipeline when you finish, while "Delete" moves it to a trash you can undo immediately or restore later.
 
-Anyone can start writing without an account. The first time you finish a piece, Writer asks for an email and sends a six-digit code; entering it creates the account and claims every draft this browser wrote, then filing proceeds as usual. Each account's archive is private to it, and every signed-in writer can export theirs as a zip. Unclaimed anonymous drafts are removed after 14 days. Operators get an admin console at `/admin` (one password, stored as the `ADMIN_PASSWORD` secret) with traffic and usage numbers, user and document management, and an activity log; page views are counted without storing IP addresses or tying them to accounts (set an `ANALYTICS_SECRET` so visitor hashes cannot be recomputed from a database export). Sign-in mail goes out through Cloudflare Email Service, so onboard your sending domain in the dashboard before going live.
+Anyone can start writing without an account. The first time you finish a piece, Writer asks for an email and sends a six-digit code; entering it creates the account and claims every draft this browser wrote, then filing proceeds as usual. Each account's archive is private to it, and every signed-in writer can export theirs as a zip. Unclaimed anonymous drafts are removed after 14 days. Operators get an admin console at `/admin` (one password, stored as the `ADMIN_PASSWORD` secret). Traffic covers visitors, visits, bounce rate, engaged time, scroll depth, channels (search, social, AI assistants, email, campaigns), referrers, UTM tags, pages, entry and exit pages, regions, devices, browsers, systems, languages and Web Vitals; click any row to filter by it. Product shows the anonymous-to-account funnel, active writers, weekly retention, suggestion and agent outcomes, search and errors. Models records every Workers AI call with its tokens, cache hits and the neurons Workers AI reports it billed, broken down by model, feature, user and document. There is also user and document management and a filterable activity log with CSV exports. Page views are counted without storing IP addresses or tying them to accounts (set an `ANALYTICS_SECRET` so visitor hashes cannot be recomputed from a database export). Sign-in mail goes out through Cloudflare Email Service, so onboard your sending domain in the dashboard before going live.
 
 Browse and search everything at `/archive`. Instances with the optional site lock (`WRITER_ACCESS_KEY`) also get semantic search (`mode=semantic`) and a read-only MCP endpoint (`/mcp`, Bearer auth). No framework, no bundler, no runtime dependencies: what is in `src/` and `public/` is what gets deployed. See [快速开始](#快速开始) for deploy steps (the commands are language-neutral), and [src/ai.js](src/ai.js) to swap models. Note that Kimi K2.6 requires a Workers Paid plan; on the free plan Writer automatically runs on Qwen3 instead.

@@ -137,7 +137,7 @@ export async function handleAuthApi(request, env, ctx, path, viewer) {
   if (path === '/api/auth/me' && method === 'GET') return me(env, viewer);
   if (path === '/api/auth/start' && method === 'POST') return startSignIn(request, env, ctx, viewer);
   if (path === '/api/auth/verify' && method === 'POST') return verifySignIn(request, env, ctx, viewer);
-  if (path === '/api/auth/logout' && method === 'POST') return logout(env, ctx, viewer);
+  if (path === '/api/auth/logout' && method === 'POST') return logout(request, env, ctx, viewer);
   return null;
 }
 
@@ -158,7 +158,9 @@ export async function startSignIn(request, env, ctx, viewer, now = Date.now()) {
   if (!email) return json({ error: 'invalid_email' }, 400);
   const lang = resolveLang(body && body.lang, request.headers.get('Accept-Language'));
 
-  const limited = await enforceRateLimit(request, { bucket: 'auth-start', limit: 10, windowMs: 60 * 60 * 1000 });
+  const limited = await enforceRateLimit(request, {
+    bucket: 'auth-start', limit: 10, windowMs: 60 * 60 * 1000, onLimit: () => noteLimit(env, ctx, request, 'auth-start'),
+  });
   if (limited) return limited;
 
   // Per-address throttle lives in D1 so it holds across every edge location.
@@ -170,9 +172,13 @@ export async function startSignIn(request, env, ctx, viewer, now = Date.now()) {
 
   const user = await env.DB.prepare('SELECT id, status FROM users WHERE email = ?').bind(email).first();
   if (!user && (await registrationStatus(env)) === REGISTRATION_CLOSED) {
+    track(env, ctx, { type: 'auth_refused', request, meta: { reason: 'registration_closed' } });
     return json({ error: 'registration_closed' }, 403);
   }
-  if (user && user.status !== 'active') return json({ error: 'account_disabled' }, 403);
+  if (user && user.status !== 'active') {
+    track(env, ctx, { type: 'auth_refused', request, userId: user.id, meta: { reason: 'account_disabled' } });
+    return json({ error: 'account_disabled' }, 403);
+  }
   if (await guessesSpent(env, email, now)) return json({ error: 'too_many_attempts' }, 429);
   if ((await bumpCounter(env, `auth_send:${hourBucket(now)}`)) > SEND_LIMIT_PER_HOUR) {
     return json({ error: 'busy' }, 429);
@@ -194,11 +200,11 @@ export async function startSignIn(request, env, ctx, viewer, now = Date.now()) {
     await env.DB.prepare('DELETE FROM login_codes WHERE email = ?').bind(email).run();
     const reason = err instanceof EmailUnavailableError ? err.reason : 'unknown';
     console.error('sign-in email failed', reason);
-    track(env, ctx, { type: 'auth_email_failed', meta: { reason: String(reason).slice(0, 60) } });
+    track(env, ctx, { type: 'auth_email_failed', request, meta: { reason: String(reason).slice(0, 60) } });
     return json({ error: 'email_unavailable' }, 503);
   }
 
-  track(env, ctx, { type: 'auth_code_sent', userId: user ? user.id : null, meta: { newAccount: !user } });
+  track(env, ctx, { type: 'auth_code_sent', request, userId: user ? user.id : null, meta: { newAccount: !user, lang } });
   return json({ ok: true, email, expiresIn: CODE_TTL_MS / 1000, resendIn: CODE_RESEND_MS / 1000 });
 }
 
@@ -208,13 +214,18 @@ export async function verifySignIn(request, env, ctx, viewer, now = Date.now()) 
   const code = String((body && body.code) || '').replace(/\D/g, '');
   if (!email || code.length !== 6) return json({ error: 'invalid_code' }, 400);
 
-  const limited = await enforceRateLimit(request, { bucket: 'auth-verify', limit: 30, windowMs: 15 * 60 * 1000 });
+  const limited = await enforceRateLimit(request, {
+    bucket: 'auth-verify', limit: 30, windowMs: 15 * 60 * 1000, onLimit: () => noteLimit(env, ctx, request, 'auth-verify'),
+  });
   if (limited) return limited;
 
   // Every attempt spends from the address's hourly budget first, in one
   // atomic statement, so fresh codes never buy fresh guesses.
   const spentOnAddress = await spendGuess(env, email, now);
-  if (spentOnAddress > EMAIL_GUESS_LIMIT) return json({ error: 'too_many_attempts' }, 429);
+  if (spentOnAddress > EMAIL_GUESS_LIMIT) {
+    if (spentOnAddress === EMAIL_GUESS_LIMIT + 1) track(env, ctx, { type: 'auth_locked', request, meta: { scope: 'address' } });
+    return json({ error: 'too_many_attempts' }, 429);
+  }
 
   const row = await env.DB.prepare('SELECT * FROM login_codes WHERE email = ?').bind(email).first();
   if (!row) return json({ error: 'invalid_code' }, 400);
@@ -239,6 +250,7 @@ export async function verifySignIn(request, env, ctx, viewer, now = Date.now()) 
       CODE_MAX_ATTEMPTS - (Number(row.attempts) + 1),
       EMAIL_GUESS_LIMIT - spentOnAddress,
     ));
+    track(env, ctx, { type: left ? 'auth_code_wrong' : 'auth_locked', request, value: left, meta: left ? null : { scope: 'code' } });
     return json({ error: 'invalid_code', attemptsLeft: left }, 400);
   }
 
@@ -299,15 +311,15 @@ export async function verifySignIn(request, env, ctx, viewer, now = Date.now()) 
   }
 
   viewer.user = { id: user.id, email: user.email, settings: user.settings, created_at: user.created_at };
-  track(env, ctx, { type: created ? 'signup' : 'login', userId: user.id, meta: { claimed } });
+  track(env, ctx, { type: created ? 'signup' : 'login', request, userId: user.id, value: claimed, meta: { claimed } });
   return json({ user: publicUser(user), created, claimed });
 }
 
-async function logout(env, ctx, viewer) {
+async function logout(request, env, ctx, viewer) {
   if (viewer.sessionHash) {
     await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(viewer.sessionHash).run();
   }
-  if (viewer.user) track(env, ctx, { type: 'logout', userId: viewer.user.id });
+  if (viewer.user) track(env, ctx, { type: 'logout', request, userId: viewer.user.id });
   viewer.cookies.push(serializeCookie(SESSION_COOKIE, '', { maxAge: 0 }));
   // A fresh anonymous id, so the next person at this browser starts clean.
   viewer.cookies.push(serializeCookie(ANON_COOKIE, randomToken(18), { maxAge: ANON_TTL_S }));
@@ -336,4 +348,8 @@ async function guessesSpent(env, email, now) {
 
 function publicUser(user) {
   return { id: user.id, email: user.email, created_at: user.created_at || null };
+}
+
+function noteLimit(env, ctx, request, bucket) {
+  track(env, ctx, { type: 'rate_limited', request, meta: { bucket } });
 }

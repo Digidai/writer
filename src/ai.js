@@ -4,6 +4,8 @@
 // Qwen3-30B-A3B is the low-latency path (inline completion) and the
 // automatic fallback whenever Kimi is unavailable (plan gate 403,
 // rate limit 429, capacity errors). Both are hosted on Workers AI.
+import { meterCall, usageFrom, estimateTokens, errorText } from './ai-usage.js';
+
 export const AGENT_MODEL = '@cf/moonshotai/kimi-k2.6';
 export const FALLBACK_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
 export const COMPLETION_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
@@ -11,33 +13,92 @@ export const COMPLETION_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
 // Route calls through AI Gateway for per-call logs and cost analytics.
 const GATEWAY = { id: 'default' };
 
-export async function chat(env, model, { messages, tools, max_tokens = 1024, temperature = 0.4 }) {
+// Every call is metered (src/ai-usage.js): success or failure, latency,
+// and the tokens the response reports. `meter` names the feature and,
+// when there is one, the writer and the document.
+export async function chat(env, model, { messages, tools, max_tokens = 1024, temperature = 0.4 }, meter = null) {
   const inputs = { messages, max_tokens, temperature };
   if (tools && tools.length) inputs.tools = tools;
+  const started = Date.now();
   let res;
   try {
-    res = await env.AI.run(model, inputs, { gateway: GATEWAY });
+    res = await runModel(env, model, inputs, meter);
+  } catch (err) {
+    await meterCall(env, meter, { model, status: 'error', error: errorText(err), latency: Date.now() - started });
+    throw err;
+  }
+  const out = normalize(res);
+  await meterCall(env, meter, {
+    model,
+    status: out.content || out.toolCalls.length ? 'ok' : 'empty',
+    latency: Date.now() - started,
+    usage: usageFrom(res) || {
+      input: estimateTokens(JSON.stringify(inputs.messages)) + (tools ? estimateTokens(JSON.stringify(tools)) : 0),
+      cached: 0,
+      output: estimateTokens(out.content) + estimateTokens(JSON.stringify(out.toolCalls.map((c) => c.args))),
+      reasoning: 0,
+      neurons: null,
+      estimated: true,
+    },
+    toolCalls: out.toolCalls.length,
+    finishReason: finishReason(res),
+    logId: gatewayLogId(env),
+  });
+  return out;
+}
+
+export async function runModel(env, model, inputs, meter = null) {
+  const options = { gateway: gatewayFor(meter) };
+  // An agent run resends the same long prefix (instructions and the
+  // document) every turn. Pinning the run to one replica lets Workers AI
+  // serve that prefix from its prompt cache, billed at about a sixth.
+  if (meter && meter.affinity) options.extraHeaders = { 'x-session-affinity': meter.affinity };
+  try {
+    return await env.AI.run(model, inputs, options);
   } catch (err) {
     // Older runtimes / local dev may reject the gateway option; retry bare.
-    if (/gateway/i.test(String(err))) res = await env.AI.run(model, inputs);
-    else throw err;
+    if (/gateway/i.test(String(err))) return env.AI.run(model, inputs);
+    throw err;
   }
-  return normalize(res);
+}
+
+// AI Gateway keeps its own log of every call; tagging it with the feature
+// (and the document) makes that log filterable the same way /admin is.
+function gatewayFor(meter) {
+  if (!meter || !meter.feature) return GATEWAY;
+  const metadata = { app: 'writer', feature: meter.feature };
+  if (meter.docId) metadata.doc = String(meter.docId);
+  if (meter.fallback) metadata.fallback = true;
+  return { ...GATEWAY, metadata };
+}
+
+function gatewayLogId(env) {
+  try {
+    const id = env.AI && env.AI.aiGatewayLogId;
+    return typeof id === 'string' && id ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function finishReason(res) {
+  const choice = res && res.choices && res.choices[0];
+  return (choice && choice.finish_reason) || null;
 }
 
 // Agent brain with fallback: Kimi first, Qwen when Kimi is unavailable.
 // Qwen3 is a thinking model — the /no_think soft switch keeps it from
 // spending the whole token budget on reasoning.
-export async function agentChat(env, opts) {
+export async function agentChat(env, opts, meter = null) {
   try {
-    const r = await chat(env, AGENT_MODEL, opts);
+    const r = await chat(env, AGENT_MODEL, opts, meter);
     return { model: AGENT_MODEL, ...r };
   } catch (err) {
     console.warn('agent: kimi unavailable, falling back to qwen:', String(err).slice(0, 200));
     const messages = opts.messages.map((m, i) =>
       i === 0 && m.role === 'system' ? { ...m, content: `${m.content}\n/no_think` } : m
     );
-    const r = await chat(env, FALLBACK_MODEL, { ...opts, messages });
+    const r = await chat(env, FALLBACK_MODEL, { ...opts, messages }, meter ? { ...meter, fallback: true } : { fallback: true });
     return { model: FALLBACK_MODEL, ...r };
   }
 }
@@ -74,7 +135,7 @@ const COMPLETION_SYSTEM = [
   '/no_think',
 ].join('');
 
-export async function complete(env, context) {
+export async function complete(env, context, meter = null) {
   const res = await chat(env, COMPLETION_MODEL, {
     messages: [
       { role: 'system', content: COMPLETION_SYSTEM },
@@ -82,7 +143,7 @@ export async function complete(env, context) {
     ],
     max_tokens: 64,
     temperature: 0.5,
-  });
+  }, meter);
   return polishCompletion(context, res.content);
 }
 

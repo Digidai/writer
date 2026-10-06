@@ -19,7 +19,9 @@
   // the message instead of sending it.
   "send_email": [{ "name": "EMAIL" }],
   "vars": {
-    "MAIL_FROM": "Writer <noreply@genedai.md>"
+    "MAIL_FROM": "Writer <noreply@genedai.md>",
+    // For /admin's optional Cloudflare usage panel (with the CF_ANALYTICS_TOKEN secret).
+    "CF_ACCOUNT_ID": "48d9ccaf5ee7914c803b5d0656462848"
   },
 
   // Documents live in D1; archived files are mirrored to R2 as Markdown.

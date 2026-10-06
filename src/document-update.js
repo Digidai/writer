@@ -4,7 +4,7 @@ import { ownerScope } from './auth.js';
 // PUT /api/documents/:id with optimistic concurrency. `rev` is mandatory:
 // it prevents silent last-write-wins when multiple tabs race. Only the
 // document's owner (account or anonymous browser) can write it.
-export async function updateDocument(request, env, id, { maxContent = 200_000, anonMaxContent = maxContent, viewer } = {}) {
+export async function updateDocument(request, env, id, { maxContent = 200_000, anonMaxContent = maxContent, viewer, onSaved } = {}) {
   const body = await readJson(request);
   if (typeof (body && body.content) !== 'string') return json({ error: 'content required' }, 400);
   const signedIn = Boolean(viewer && viewer.user);
@@ -31,6 +31,7 @@ export async function updateDocument(request, env, id, { maxContent = 200_000, a
     if (row.status !== 'draft') return json({ error: 'not a draft', status: row.status }, 409);
     return json({ error: 'conflict', status: 'draft' }, 409);
   }
+  if (onSaved) onSaved({ id, chars: body.content.length });
   return json({ id, status: 'draft', updated_at: now });
 }
 

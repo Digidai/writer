@@ -1,9 +1,11 @@
 // Sign in with an email code. Two quiet steps on one small sheet: the
 // address, then the six digits. Used as a dialog (finishing a piece, the
 // menu) and inline (the /login page, the archive when signed out).
+import { track } from '/track.js';
 import { refreshSession } from '/session.js';
 
 export function openAuthDialog({ t, reason = 'signin', lang = 'en', onSuccess } = {}) {
+  track('auth_prompt', { reason });
   document.getElementById('auth-dialog')?.remove();
   const dialog = document.createElement('dialog');
   dialog.id = 'auth-dialog';

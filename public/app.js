@@ -196,6 +196,7 @@ function scheduleViewportSync() {
 // -------------------------------------------------------------- ghost
 
 function showGhost(text) {
+  if (text && text !== state.ghost) track('completion_shown');
   state.ghost = text;
   ghostEl.textContent = text;
   updateCompletionBar();
@@ -430,7 +431,11 @@ async function finalize(auto = false) {
       return;
     }
 
-    const res = await fetch(`/api/documents/${store.docId}/finalize`, { method: 'POST' });
+    const res = await fetch(`/api/documents/${store.docId}/finalize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto }),
+    });
     if (await redirectIfLocked(res)) return;
     if (res.status === 401) {
       // Signed out: the draft is safe (saved to this browser's anonymous
@@ -589,6 +594,7 @@ input.addEventListener('keydown', (e) => {
   }
   if (e.key === 'Escape' && state.ghost) {
     e.preventDefault();
+    track('completion_dismiss');
     clearGhost();
     return;
   }
@@ -609,6 +615,7 @@ completionAcceptEl?.addEventListener('click', () => {
   input.focus();
 });
 completionDismissEl?.addEventListener('click', () => {
+  if (state.ghost) track('completion_dismiss');
   clearGhost();
   input.focus();
 });
